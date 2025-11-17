@@ -37,19 +37,46 @@ def _clean_env_value(raw: str, name: str) -> str:
     return cleaned
 
 
-def _normalize_base_url(raw: str) -> str:
+def _normalize_base_url(raw: str, name: str) -> str:
     """标准化 base_url：去除空格与末尾斜杠，兼容 DeepSeek 直连或 GPUStack 代理。"""
 
-    cleaned = _clean_env_value(raw, "GPUSTACK_BASE_URL")
+    cleaned = _clean_env_value(raw, name)
     # 兼容传入形如 "https://api.deepseek.com/" 或 GPUStack 带 path 的地址
     if cleaned.endswith("/"):
         cleaned = cleaned[:-1]
     return cleaned
 
 
-GPUSTACK_API_KEY = _clean_env_value(os.getenv("GPUSTACK_API_KEY", "YOUR_API_KEY"), "GPUSTACK_API_KEY")
+def _get_first_env(names: list, default: str, *, required_name: str) -> str:
+    """按优先级读取多个环境变量，便于兼容不同命名。"""
+
+    for key in names:
+        raw = os.getenv(key)
+        if raw:
+            if key != required_name:
+                print(
+                    f"[config] 检测到 {key}，已作为 {required_name} 使用（建议改为 {required_name} 以避免混淆）。"
+                )
+            return _clean_env_value(raw, key)
+
+    print(
+        f"[config] 未设置 {required_name}（或等价变量 {', '.join(names)}），将使用默认占位，后续调用可能认证失败。"
+    )
+    return default
+
+
+GPUSTACK_API_KEY = _get_first_env(
+    ["GPUSTACK_API_KEY", "DEEPSEEK_API_KEY"],
+    "YOUR_API_KEY",
+    required_name="GPUSTACK_API_KEY",
+)
 GPUSTACK_BASE_URL = _normalize_base_url(
-    os.getenv("GPUSTACK_BASE_URL", "http://10.20.40.101/v1")
+    _get_first_env(
+        ["GPUSTACK_BASE_URL", "DEEPSEEK_BASE_URL"],
+        "http://10.20.40.101/v1",
+        required_name="GPUSTACK_BASE_URL",
+    ),
+    "GPUSTACK_BASE_URL",
 )
 MODEL_NAME = _clean_env_value(
     os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-r1"), "DEEPSEEK_MODEL_NAME"
