@@ -42,6 +42,7 @@
 - `POST /api/generate-ga`：纯 JSON 请求版。
   - Body：`{ "chunks": [...], "chunk_indices": [int], "num_questions": 20, "system_prompt": "..." }`。
 - `POST /export-docx`：将前端编辑后的 GA 对导出为 DOCX，Body 见 `ExportDocxRequest`。
+- 所有生成接口均会返回 `errors` 数组（若存在），便于前端直观提示 DeepSeek 调用失败的分片或异常原因。
 
 ## DeepSeek/GPUStack 调用与超时处理
 - 单次调用默认 **120s** 超时，可通过 `GPUSTACK_TIMEOUT` 调整。

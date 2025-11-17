@@ -4,54 +4,344 @@
   <meta charset="UTF-8" />
   <title>JSON分片考试题生成器（DeepSeek + GA对）</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 20px; }
-    h1 { font-size: 22px; }
-    h2 { font-size: 18px; margin-top: 24px; }
-    label { display: inline-block; min-width: 150px; vertical-align: top; }
-    input[type="text"], input[type="number"], textarea {
-      width: 100%; max-width: 800px; box-sizing: border-box;
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffffcc;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --brand: #0a84ff;
+      --brand-strong: #0060df;
+      --accent: #34c759;
+      --shadow: 0 20px 45px -25px rgba(0, 0, 0, 0.25);
+      --radius: 14px;
     }
-    textarea { height: 140px; }
-    .form-row { margin-bottom: 12px; }
-    button { padding: 6px 16px; margin-right: 8px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
-    th, td { border: 1px solid #ccc; padding: 4px; vertical-align: top; }
-    th { background: #f5f5f5; }
-    .small-input { width: 80px; }
-    .mono { font-family: "Consolas", "Courier New", monospace; font-size: 12px; }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 32px 0 48px;
+      font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 20% 20%, #f7fbff, #edf2f7 35%),
+        radial-gradient(circle at 80% 0%, #f4f8ff, #e7ecf5 45%),
+        linear-gradient(135deg, #f8fbff 0%, #eef2f7 50%, #f7f9fb 100%);
+    }
+
+    .app-shell {
+      width: min(1160px, 94vw);
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .logo-dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0a84ff, #34c759);
+      box-shadow: 0 8px 18px rgba(10, 132, 255, 0.25);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0.2px;
+    }
+
+    .subhead {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+      margin-bottom: 16px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 18px;
+      letter-spacing: 0.2px;
+    }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px 18px;
+    }
+
+    .full-row {
+      grid-column: 1 / -1;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: var(--muted);
+      letter-spacing: 0.1px;
+    }
+
+    input[type="text"], input[type="number"], textarea, input[type="file"] {
+      width: 100%;
+      font-size: 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #fdfdff;
+      transition: border 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    textarea { min-height: 140px; resize: vertical; }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 4px rgba(10, 132, 255, 0.12);
+    }
+
+    .hint {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .button-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .error-banner {
+      display: none;
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid #ffebe9;
+      background: linear-gradient(135deg, #fff5f5, #ffecec);
+      color: #b00020;
+      box-shadow: 0 10px 30px rgba(255, 107, 114, 0.12);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .error-line + .error-line { margin-top: 6px; }
+
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 10px 18px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.18s ease, background 0.2s ease;
+    }
+
+    .primary {
+      background: linear-gradient(145deg, var(--brand), #2992ff);
+      color: white;
+      box-shadow: 0 12px 25px rgba(10, 132, 255, 0.28);
+    }
+
+    .primary:hover { transform: translateY(-1px); }
+
+    .ghost {
+      background: #f5f7fb;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .ghost:disabled, .primary:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #0a84ff;
+      font-size: 12px;
+      margin-left: auto;
+    }
+
+    details summary {
+      cursor: pointer;
+      color: var(--brand-strong);
+      font-weight: 600;
+      margin-top: 6px;
+    }
+
+    pre {
+      background: #f6f8fb;
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      font-family: "SFMono-Regular", "Consolas", "Menlo", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #1f2937;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #374151;
+      font-weight: 700;
+      text-align: left;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    textarea.field-question, textarea.field-ga-answer,
+    textarea.field-source-locator, textarea.field-source-excerpt,
+    textarea.field-comment {
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .small-input { width: 90px; }
+
+    #progress-container {
+      display: none;
+      margin-top: 12px;
+      background: #f7f9fd;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+
+    #progress-text {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--brand);
+      box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.4);
+      animation: pulse 1.6s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(10, 132, 255, 0.45); }
+      70% { box-shadow: 0 0 0 12px rgba(10, 132, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(10, 132, 255, 0); }
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      background-color: #e9eef6;
+      border-radius: 10px;
+      overflow: hidden;
+      height: 16px;
+      border: 1px solid #d7deea;
+    }
+
+    #progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(120deg, #0a84ff, #4bc7ff, #34c759);
+      background-size: 200% 200%;
+      animation: shimmer 2s linear infinite;
+      transition: width 0.35s ease;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+
+    #chunk-info {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
-  <h1>JSON分片考试题生成器（DeepSeek + GA 对）</h1>
+  <div class="app-shell">
+    <header>
+      <div class="logo-dot"></div>
+      <div>
+        <h1>JSON分片考试题生成器（DeepSeek + GA 对）</h1>
+        <p class="subhead">上传 JSON 分片、自动生成 GA 对并可在线编辑导出 DOCX</p>
+      </div>
+    </header>
 
-  <h2>① 上传 JSON 分片 + 生成 GA 对</h2>
-  <form id="ga-form">
-    <div class="form-row">
-      <label>上传 JSON 文件：</label>
-      <input type="file" name="file" id="json-file" required />
-    </div>
-
-    <div class="form-row">
-      <label>分片索引（0,1,2）：</label>
-      <input type="text" name="chunk_indices" id="chunk-indices" value="0,1,2" />
-    </div>
-
-    <div class="form-row">
-      <label>题目总数量（GA 对数）：</label>
-      <input type="number" name="num_questions" id="num-questions" value="20" min="1" />
-    </div>
-
-    <div class="form-row">
-      <label>Docx 标题：</label>
-      <input type="text" id="docx-title" value="培训考试题（含答案与原文引用）" />
-    </div>
-
-    <div class="form-row">
-      <label>System Prompt（可编辑）：</label>
-      <textarea name="system_prompt" id="system-prompt" placeholder="留空则使用后端默认 GA 提示词"></textarea>
-      <details>
-        <summary>查看默认 GA 提示词大致结构（仅参考）</summary>
-        <pre class="mono">
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+        <h2>① 上传 JSON 分片 &amp; 生成 GA 对</h2>
+        <span class="pill">自动识别分片数量</span>
+      </div>
+      <form id="ga-form">
+        <div class="form-grid">
+          <div>
+            <label>上传 JSON 文件</label>
+            <input type="file" name="file" id="json-file" required />
+            <div class="hint">支持直接 list 或 {"chunks": [...]} 结构</div>
+          </div>
+          <div>
+            <label>题目总数量（GA 对数）</label>
+            <input type="number" name="num_questions" id="num-questions" value="20" min="1" />
+          </div>
+          <div>
+            <label>分片索引（留空自动全选）</label>
+            <input type="text" name="chunk_indices" id="chunk-indices" placeholder="例如：0,1,2 或留空使用全部" />
+            <div id="chunk-info">等待文件解析…</div>
+          </div>
+          <div>
+            <label>Docx 标题</label>
+            <input type="text" id="docx-title" value="培训考试题（含答案与原文引用）" />
+          </div>
+          <div class="full-row">
+            <label>System Prompt（可编辑）</label>
+            <textarea name="system_prompt" id="system-prompt" placeholder="留空则使用后端默认 GA 提示词"></textarea>
+            <details>
+              <summary>查看默认 GA 提示词大致结构（仅参考）</summary>
+              <pre>
 - 角色：铁路通信/信号/防雷规范命题专家
 - 目标：基于规范片段生成 GA 对（问题 + 标准答案）
 - 要求：
@@ -60,51 +350,59 @@
   * 每道题带原文摘录、来源定位
   * 输出为 {"ga_pairs": [...]} 的 JSON
 - 题型：包含单选题、多选题、判断题和简答题等各种题型
-        </pre>
-      </details>
+              </pre>
+            </details>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="primary" type="submit">开始生成 GA 对</button>
+        </div>
+
+        <div id="progress-container">
+          <div id="progress-text"><span class="pulse-dot"></span><span>正在连接 DeepSeek 服务…</span></div>
+          <div class="progress-bar-bg">
+            <div id="progress-bar"></div>
+          </div>
+        </div>
+
+        <div id="error-banner" class="error-banner"></div>
+      </form>
     </div>
 
-    <div class="form-row">
-      <button type="submit">生成 GA 对</button>
+    <div class="card">
+      <h2>② GA 对在线编辑</h2>
+      <p class="subhead">生成完成后会出现在下表，可直接修改题目、答案、难度、来源定位与原文摘录。</p>
+
+      <table id="ga-table" style="display:none;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>ID</th>
+            <th>题目（question）</th>
+            <th>答案（ga_answer）</th>
+            <th>难度（difficulty）</th>
+            <th>来源定位（source_locator）</th>
+            <th>原文摘录（source_excerpt）</th>
+            <th>命题说明（comment）</th>
+          </tr>
+        </thead>
+        <tbody id="ga-table-body"></tbody>
+      </table>
+
+      <div id="no-data-tip" style="margin-top:8px; color:#94a3b8;">尚未生成 GA 对。</div>
     </div>
-    
-    <!-- 进度显示区域 -->
-    <div id="progress-container" style="display: none; margin-top: 15px;">
-      <div id="progress-text" style="margin-bottom: 5px;">正在连接DeepSeek服务器...</div>
-      <div style="width: 100%; background-color: #f0f0f0; border-radius: 5px;">
-        <div id="progress-bar" style="width: 0%; height: 20px; background-color: #4CAF50; border-radius: 5px; transition: width 0.3s;"></div>
+
+    <div class="card">
+      <h2>③ 导出 DOCX（试题 + 答案 + 原文引用）</h2>
+      <div class="button-row">
+        <button id="export-docx-btn" class="ghost" disabled>导出为 DOCX</button>
       </div>
     </div>
-  </form>
-
-  <h2>② GA 对在线编辑</h2>
-  <p>生成完成后会出现在下表中，你可以在浏览器里直接修改题目、答案、难度、原文摘录和来源定位。</p>
-
-  <table id="ga-table" style="display:none;">
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>ID</th>
-        <th>题目（question）</th>
-        <th>答案（ga_answer）</th>
-        <th>难度（difficulty）</th>
-        <th>来源定位（source_locator）</th>
-        <th>原文摘录（source_excerpt）</th>
-        <th>命题说明（comment）</th>
-      </tr>
-    </thead>
-    <tbody id="ga-table-body"></tbody>
-  </table>
-
-  <div id="no-data-tip" style="margin-top:8px; color:#888;">
-    尚未生成 GA 对。
   </div>
-
-  <h2>③ 导出 DOCX（试题 + 答案 + 原文引用）</h2>
-  <button id="export-docx-btn" disabled>导出为 DOCX</button>
 
   <script>
     let currentGAPairs = [];
+    let progressTimer = null;
 
     function renderTable() {
       const table = document.getElementById('ga-table');
@@ -212,6 +510,82 @@
       return result;
     }
 
+    function startProgress() {
+      const container = document.getElementById('progress-container');
+      const text = document.getElementById('progress-text');
+      const bar = document.getElementById('progress-bar');
+      showErrors([]);
+      container.style.display = 'block';
+      text.innerHTML = '<span class="pulse-dot"></span><span>正在连接 DeepSeek 服务…</span>';
+      bar.style.width = '14%';
+      let percent = 14;
+      if (progressTimer) clearInterval(progressTimer);
+      progressTimer = setInterval(() => {
+        percent = Math.min(percent + Math.random() * 10, 90);
+        bar.style.width = `${percent}%`;
+      }, 450);
+    }
+
+    function finishProgress(success = true) {
+      const container = document.getElementById('progress-container');
+      const text = document.getElementById('progress-text');
+      const bar = document.getElementById('progress-bar');
+      if (progressTimer) clearInterval(progressTimer);
+      bar.style.width = '100%';
+      text.innerHTML = success
+        ? '<span class="pulse-dot" style="background: var(--accent);"></span><span>生成完成</span>'
+        : '<span class="pulse-dot" style="background: #ff3b30;"></span><span>生成失败，请检查后端日志</span>';
+      setTimeout(() => { container.style.display = 'none'; }, 800);
+    }
+
+    function showErrors(errors = []) {
+      const banner = document.getElementById('error-banner');
+      if (errors.length === 0) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        return;
+      }
+      banner.style.display = 'block';
+      banner.innerHTML = errors.map(e => `<div class="error-line">⚠️ ${e}</div>`).join('');
+    }
+
+    function parseChunksLength(jsonData) {
+      if (Array.isArray(jsonData)) return jsonData.length;
+      if (jsonData && Array.isArray(jsonData.chunks)) return jsonData.chunks.length;
+      return 0;
+    }
+
+    document.getElementById('json-file').addEventListener('change', (e) => {
+      const info = document.getElementById('chunk-info');
+      const input = document.getElementById('chunk-indices');
+      const file = e.target.files?.[0];
+      if (!file) {
+        info.textContent = '等待文件解析…';
+        input.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const parsed = JSON.parse(evt.target.result);
+          const length = parseChunksLength(parsed);
+          if (length > 0) {
+            const indices = Array.from({ length }, (_, i) => i).join(',');
+            input.value = indices;
+            info.textContent = `检测到 ${length} 个分片，已自动填入索引。`;
+          } else {
+            info.textContent = '未识别到 chunks 数组，请确认文件格式。';
+            input.placeholder = '例如：0,1,2';
+          }
+        } catch (err) {
+          console.error(err);
+          info.textContent = '文件不是有效的 JSON，请重新选择。';
+        }
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+
     document.getElementById('ga-form').addEventListener('submit', function (e) {
       e.preventDefault();
 
@@ -221,41 +595,33 @@
         return;
       }
 
-      // 显示进度条
-      const progressContainer = document.getElementById('progress-container');
-      const progressText = document.getElementById('progress-text');
-      const progressBar = document.getElementById('progress-bar');
-      
-      progressContainer.style.display = 'block';
-      progressText.textContent = '正在连接DeepSeek服务器...';
-      progressBar.style.width = '0%';
+        startProgress();
 
-      const formData = new FormData();
-      formData.append('file', fileInput.files[0]);
-      formData.append('chunk_indices', document.getElementById('chunk-indices').value);
-      formData.append('num_questions', document.getElementById('num-questions').value);
-      formData.append('system_prompt', document.getElementById('system-prompt').value);
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('chunk_indices', document.getElementById('chunk-indices').value);
+        formData.append('num_questions', document.getElementById('num-questions').value);
+        formData.append('system_prompt', document.getElementById('system-prompt').value);
 
-      fetch('/api/generate-ga-from-file', {
-        method: 'POST',
-        body: formData
-      })
-        .then(res => res.json())
-        .then(data => {
-          // 隐藏进度条
-          progressContainer.style.display = 'none';
-          
-          currentGAPairs = data.ga_pairs || [];
-          renderTable();
+        fetch('/api/generate-ga-from-file', {
+          method: 'POST',
+          body: formData
         })
-        .catch(err => {
-          // 隐藏进度条
-          progressContainer.style.display = 'none';
-          
-          console.error(err);
-          alert('生成 GA 对失败，请检查后端日志。');
-        });
-    });
+          .then(res => res.json())
+          .then(data => {
+            const errors = data.errors || [];
+            finishProgress(errors.length === 0);
+            currentGAPairs = data.ga_pairs || [];
+            renderTable();
+            showErrors(errors);
+          })
+          .catch(err => {
+            console.error(err);
+            finishProgress(false);
+            showErrors(['网络异常或后端不可用，请稍后重试。']);
+            alert('生成 GA 对失败，请检查后端日志。');
+          });
+      });
 
     document.getElementById('export-docx-btn').addEventListener('click', function () {
       const gaPairs = collectGAPairsFromTable();
