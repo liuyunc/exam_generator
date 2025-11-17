@@ -1,0 +1,19 @@
+# Python 常见临时文件
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 虚拟环境（任选实际使用的名字）
+venv/
+.venv/
+
+# PyCharm 配置
+.idea/
+
+# 其他常见临时目录
+*.log
+.DS_Store
+dist/
+build/
+*.egg-info/
