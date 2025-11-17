@@ -23,11 +23,45 @@ from docx_utils import build_docx_from_ga
 
 # ========= 配置：gpustuck DeepSeek =========
 
-GPUSTACK_API_KEY = os.getenv("GPUSTACK_API_KEY", "YOUR_API_KEY")
-GPUSTACK_BASE_URL = os.getenv("GPUSTACK_BASE_URL", "http://10.20.40.101/v1")
-MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-r1")
-GPUSTACK_TIMEOUT = float(os.getenv("GPUSTACK_TIMEOUT", "120"))
-GPUSTACK_MAX_RETRIES = max(int(os.getenv("GPUSTACK_MAX_RETRIES", "2")), 1)
+
+def _clean_env_value(raw: str, name: str) -> str:
+    """去除环境变量两端空格，避免配置中出现看不见的前缀/后缀。"""
+
+    if raw is None:
+        return ""
+
+    cleaned = raw.strip()
+    if cleaned != raw:
+        print(f"[config] 环境变量 {name} 含有首尾空格，已自动去除。")
+    return cleaned
+
+
+def _normalize_base_url(raw: str) -> str:
+    """标准化 base_url：去除空格与末尾斜杠，兼容 DeepSeek 直连或 GPUStack 代理。"""
+
+    cleaned = _clean_env_value(raw, "GPUSTACK_BASE_URL")
+    # 兼容传入形如 "https://api.deepseek.com/" 或 GPUStack 带 path 的地址
+    if cleaned.endswith("/"):
+        cleaned = cleaned[:-1]
+    return cleaned
+
+
+GPUSTACK_API_KEY = _clean_env_value(os.getenv("GPUSTACK_API_KEY", "YOUR_API_KEY"), "GPUSTACK_API_KEY")
+GPUSTACK_BASE_URL = _normalize_base_url(
+    os.getenv("GPUSTACK_BASE_URL", "http://10.20.40.101/v1")
+)
+MODEL_NAME = _clean_env_value(
+    os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-r1"), "DEEPSEEK_MODEL_NAME"
+)
+GPUSTACK_TIMEOUT = float(
+    _clean_env_value(os.getenv("GPUSTACK_TIMEOUT", "120"), "GPUSTACK_TIMEOUT") or "120"
+)
+GPUSTACK_MAX_RETRIES = max(
+    int(_clean_env_value(os.getenv("GPUSTACK_MAX_RETRIES", "2"), "GPUSTACK_MAX_RETRIES") or "2"),
+    1,
+)
+
+print(f"[config] base_url={GPUSTACK_BASE_URL}, model={MODEL_NAME}, timeout={GPUSTACK_TIMEOUT}s, retries={GPUSTACK_MAX_RETRIES}")
 
 client = OpenAI(
     api_key=GPUSTACK_API_KEY,
