@@ -9,7 +9,14 @@ from fastapi import FastAPI, UploadFile, Form, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import OpenAI
+import time
+
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    OpenAI,
+)
 
 from prompts import GA_SYSTEM_PROMPT, build_ga_user_prompt
 from docx_utils import build_docx_from_ga
@@ -19,6 +26,8 @@ from docx_utils import build_docx_from_ga
 GPUSTACK_API_KEY = os.getenv("GPUSTACK_API_KEY", "YOUR_API_KEY")
 GPUSTACK_BASE_URL = os.getenv("GPUSTACK_BASE_URL", "http://10.20.40.101/v1")
 MODEL_NAME = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-r1")
+GPUSTACK_TIMEOUT = float(os.getenv("GPUSTACK_TIMEOUT", "120"))
+GPUSTACK_MAX_RETRIES = max(int(os.getenv("GPUSTACK_MAX_RETRIES", "2")), 1)
 
 client = OpenAI(
     api_key=GPUSTACK_API_KEY,
@@ -163,18 +172,35 @@ def call_deepseek_ga_single_chunk(
     sys_prompt = system_prompt.strip() if system_prompt else GA_SYSTEM_PROMPT
     user_prompt = build_ga_user_prompt(text_for_model, num_questions)
 
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.3,
-            timeout=120.0,  # 增加超时时间为120秒
-        )
-    except Exception as e:
-        print(f"API调用失败：{repr(e)}")
+    resp = None
+    for attempt in range(1, GPUSTACK_MAX_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                timeout=GPUSTACK_TIMEOUT,
+            )
+            break
+        except (APITimeoutError, APIConnectionError) as e:
+            print(
+                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；"
+                f" 超时设置 {GPUSTACK_TIMEOUT}s"
+            )
+            if attempt == GPUSTACK_MAX_RETRIES:
+                return []
+            time.sleep(min(2 * attempt, 6))
+        except APIError as e:
+            print(f"[DeepSeek] 服务器返回错误：{repr(e)}")
+            return []
+        except Exception as e:
+            print(f"API调用失败：{repr(e)}")
+            return []
+
+    if resp is None:
         return []
 
     content = resp.choices[0].message.content or ""
