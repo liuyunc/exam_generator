@@ -21,8 +21,8 @@
    pip install -r requirements.txt
    ```
 2. 环境变量
-   - `GPUSTACK_API_KEY`：GPUStack/DeepSeek API Key（必填）。
-   - `GPUSTACK_BASE_URL`：API Base，默认为 `http://10.20.40.101/v1`，可直接填 DeepSeek 官方或代理地址（支持带 `/api/deepseek/v1` 路径）。会自动去掉首尾空格和末尾 `/`，避免因隐形空格导致连接失败。
+   - `GPUSTACK_API_KEY`：GPUStack/DeepSeek API Key（必填）。如果你在其他工程里已经使用 `DEEPSEEK_API_KEY`，本项目也会自动读取（并在启动日志提示最好改回 `GPUSTACK_API_KEY` 以保持一致）。
+   - `GPUSTACK_BASE_URL`：API Base，默认为 `http://10.20.40.101/v1`，可直接填 DeepSeek 官方或代理地址（支持带 `/api/deepseek/v1` 路径）。会自动去掉首尾空格和末尾 `/`，避免因隐形空格导致连接失败；同时兼容 `DEEPSEEK_BASE_URL` 命名。
    - `DEEPSEEK_MODEL_NAME`：模型名，默认 `deepseek-r1`，会自动 trim 首尾空格。
    - `GPUSTACK_TIMEOUT`：单次模型调用超时（秒），默认 `120`。
    - `GPUSTACK_MAX_RETRIES`：连接/超时重试次数，默认 `2`。
