@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+python-docx
+openai>=1.6.0
+pydantic
+python-multipart

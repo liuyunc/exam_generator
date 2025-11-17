@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>JSON分片考试题生成器（DeepSeek + GA对）</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif; margin: 20px; }
+    h1 { font-size: 22px; }
+    h2 { font-size: 18px; margin-top: 24px; }
+    label { display: inline-block; min-width: 150px; vertical-align: top; }
+    input[type="text"], input[type="number"], textarea {
+      width: 100%; max-width: 800px; box-sizing: border-box;
+    }
+    textarea { height: 140px; }
+    .form-row { margin-bottom: 12px; }
+    button { padding: 6px 16px; margin-right: 8px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
+    th, td { border: 1px solid #ccc; padding: 4px; vertical-align: top; }
+    th { background: #f5f5f5; }
+    .small-input { width: 80px; }
+    .mono { font-family: "Consolas", "Courier New", monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>JSON分片考试题生成器（DeepSeek + GA 对）</h1>
+
+  <h2>① 上传 JSON 分片 + 生成 GA 对</h2>
+  <form id="ga-form">
+    <div class="form-row">
+      <label>上传 JSON 文件：</label>
+      <input type="file" name="file" id="json-file" required />
+    </div>
+
+    <div class="form-row">
+      <label>分片索引（0,1,2）：</label>
+      <input type="text" name="chunk_indices" id="chunk-indices" value="0,1,2" />
+    </div>
+
+    <div class="form-row">
+      <label>题目总数量（GA 对数）：</label>
+      <input type="number" name="num_questions" id="num-questions" value="20" min="1" />
+    </div>
+
+    <div class="form-row">
+      <label>Docx 标题：</label>
+      <input type="text" id="docx-title" value="培训考试题（含答案与原文引用）" />
+    </div>
+
+    <div class="form-row">
+      <label>System Prompt（可编辑）：</label>
+      <textarea name="system_prompt" id="system-prompt" placeholder="留空则使用后端默认 GA 提示词"></textarea>
+      <details>
+        <summary>查看默认 GA 提示词大致结构（仅参考）</summary>
+        <pre class="mono">
+- 角色：铁路通信/信号/防雷规范命题专家
+- 目标：基于规范片段生成 GA 对（问题 + 标准答案）
+- 要求：
+  * 问题围绕定义、数值、范围、原则、做法等
+  * 答案准确、简洁，可直接作为标准答案
+  * 每道题带原文摘录、来源定位
+  * 输出为 {"ga_pairs": [...]} 的 JSON
+- 题型：包含单选题、多选题、判断题和简答题等各种题型
+        </pre>
+      </details>
+    </div>
+
+    <div class="form-row">
+      <button type="submit">生成 GA 对</button>
+    </div>
+    
+    <!-- 进度显示区域 -->
+    <div id="progress-container" style="display: none; margin-top: 15px;">
+      <div id="progress-text" style="margin-bottom: 5px;">正在连接DeepSeek服务器...</div>
+      <div style="width: 100%; background-color: #f0f0f0; border-radius: 5px;">
+        <div id="progress-bar" style="width: 0%; height: 20px; background-color: #4CAF50; border-radius: 5px; transition: width 0.3s;"></div>
+      </div>
+    </div>
+  </form>
+
+  <h2>② GA 对在线编辑</h2>
+  <p>生成完成后会出现在下表中，你可以在浏览器里直接修改题目、答案、难度、原文摘录和来源定位。</p>
+
+  <table id="ga-table" style="display:none;">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>ID</th>
+        <th>题目（question）</th>
+        <th>答案（ga_answer）</th>
+        <th>难度（difficulty）</th>
+        <th>来源定位（source_locator）</th>
+        <th>原文摘录（source_excerpt）</th>
+        <th>命题说明（comment）</th>
+      </tr>
+    </thead>
+    <tbody id="ga-table-body"></tbody>
+  </table>
+
+  <div id="no-data-tip" style="margin-top:8px; color:#888;">
+    尚未生成 GA 对。
+  </div>
+
+  <h2>③ 导出 DOCX（试题 + 答案 + 原文引用）</h2>
+  <button id="export-docx-btn" disabled>导出为 DOCX</button>
+
+  <script>
+    let currentGAPairs = [];
+
+    function renderTable() {
+      const table = document.getElementById('ga-table');
+      const tbody = document.getElementById('ga-table-body');
+      const tip = document.getElementById('no-data-tip');
+      const exportBtn = document.getElementById('export-docx-btn');
+
+      tbody.innerHTML = '';
+
+      if (!currentGAPairs || currentGAPairs.length === 0) {
+        table.style.display = 'none';
+        tip.style.display = 'block';
+        exportBtn.disabled = true;
+        return;
+      }
+
+      currentGAPairs.forEach((p, idx) => {
+        const tr = document.createElement('tr');
+
+        const tdIndex = document.createElement('td');
+        tdIndex.textContent = idx + 1;
+        tr.appendChild(tdIndex);
+
+        const tdId = document.createElement('td');
+        const inputId = document.createElement('input');
+        inputId.type = 'text';
+        inputId.className = 'field-id small-input';
+        inputId.value = p.id || ('q' + (idx + 1));
+        tdId.appendChild(inputId);
+        tr.appendChild(tdId);
+
+        const tdQ = document.createElement('td');
+        const taQ = document.createElement('textarea');
+        taQ.className = 'field-question';
+        taQ.value = p.question || '';
+        tdQ.appendChild(taQ);
+        tr.appendChild(tdQ);
+
+        const tdA = document.createElement('td');
+        const taA = document.createElement('textarea');
+        taA.className = 'field-ga-answer';
+        taA.value = p.ga_answer || '';
+        tdA.appendChild(taA);
+        tr.appendChild(tdA);
+
+        const tdDiff = document.createElement('td');
+        const inputDiff = document.createElement('input');
+        inputDiff.type = 'text';
+        inputDiff.className = 'field-difficulty small-input';
+        inputDiff.value = p.difficulty || '';
+        tdDiff.appendChild(inputDiff);
+        tr.appendChild(tdDiff);
+
+        const tdLoc = document.createElement('td');
+        const taLoc = document.createElement('textarea');
+        taLoc.className = 'field-source-locator';
+        taLoc.value = p.source_locator || '';
+        tdLoc.appendChild(taLoc);
+        tr.appendChild(tdLoc);
+
+        const tdExcerpt = document.createElement('td');
+        const taExcerpt = document.createElement('textarea');
+        taExcerpt.className = 'field-source-excerpt';
+        taExcerpt.value = p.source_excerpt || '';
+        tdExcerpt.appendChild(taExcerpt);
+        tr.appendChild(tdExcerpt);
+
+        const tdComment = document.createElement('td');
+        const taComment = document.createElement('textarea');
+        taComment.className = 'field-comment';
+        taComment.value = p.comment || '';
+        tdComment.appendChild(taComment);
+        tr.appendChild(tdComment);
+
+        tbody.appendChild(tr);
+      });
+
+      table.style.display = 'table';
+      tip.style.display = 'none';
+      exportBtn.disabled = false;
+    }
+
+    function collectGAPairsFromTable() {
+      const rows = document.querySelectorAll('#ga-table-body tr');
+      const result = [];
+      rows.forEach((tr, idx) => {
+        const id = tr.querySelector('.field-id').value || ('q' + (idx + 1));
+        const question = tr.querySelector('.field-question').value;
+        const ga_answer = tr.querySelector('.field-ga-answer').value;
+        const difficulty = tr.querySelector('.field-difficulty').value;
+        const source_locator = tr.querySelector('.field-source-locator').value;
+        const source_excerpt = tr.querySelector('.field-source-excerpt').value;
+        const comment = tr.querySelector('.field-comment').value;
+
+        result.push({
+          id,
+          question,
+          ga_answer,
+          difficulty,
+          source_locator,
+          source_excerpt,
+          comment
+        });
+      });
+      return result;
+    }
+
+    document.getElementById('ga-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+
+      const fileInput = document.getElementById('json-file');
+      if (!fileInput.files || fileInput.files.length === 0) {
+        alert('请先选择 JSON 文件。');
+        return;
+      }
+
+      // 显示进度条
+      const progressContainer = document.getElementById('progress-container');
+      const progressText = document.getElementById('progress-text');
+      const progressBar = document.getElementById('progress-bar');
+      
+      progressContainer.style.display = 'block';
+      progressText.textContent = '正在连接DeepSeek服务器...';
+      progressBar.style.width = '0%';
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('chunk_indices', document.getElementById('chunk-indices').value);
+      formData.append('num_questions', document.getElementById('num-questions').value);
+      formData.append('system_prompt', document.getElementById('system-prompt').value);
+
+      fetch('/api/generate-ga-from-file', {
+        method: 'POST',
+        body: formData
+      })
+        .then(res => res.json())
+        .then(data => {
+          // 隐藏进度条
+          progressContainer.style.display = 'none';
+          
+          currentGAPairs = data.ga_pairs || [];
+          renderTable();
+        })
+        .catch(err => {
+          // 隐藏进度条
+          progressContainer.style.display = 'none';
+          
+          console.error(err);
+          alert('生成 GA 对失败，请检查后端日志。');
+        });
+    });
+
+    document.getElementById('export-docx-btn').addEventListener('click', function () {
+      const gaPairs = collectGAPairsFromTable();
+      if (!gaPairs.length) {
+        alert('没有 GA 对可导出。');
+        return;
+      }
+      const title = document.getElementById('docx-title').value || '培训考试题（含答案与原文引用）';
+
+      fetch('/export-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title,
+          ga_pairs: gaPairs
+        })
+      })
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'exam_ga_pairs.docx';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        })
+        .catch(err => {
+          console.error(err);
+          alert('导出 DOCX 失败，请检查后端日志。');
+        });
+    });
+  </script>
+</body>
+</html>
