@@ -15,6 +15,7 @@ from openai import (
     APIConnectionError,
     APIError,
     APITimeoutError,
+    AuthenticationError,
     OpenAI,
 )
 
@@ -265,6 +266,35 @@ def call_deepseek_ga_single_chunk(
         print("模型返回中 ga_pairs 不是列表，完整 data：", data)
         return [], "模型返回中 ga_pairs 不是列表"
     return ga_pairs, None
+
+
+@app.get("/api/deepseek-health")
+async def deepseek_health():
+    """快速检测 DeepSeek/GPUStack 连接与鉴权是否正常。"""
+
+    start_ts = time.time()
+    try:
+        resp = client.models.list()
+        elapsed_ms = int((time.time() - start_ts) * 1000)
+        model_ids = []
+        try:
+            model_ids = [m.id for m in getattr(resp, "data", [])][:3]
+        except Exception:
+            model_ids = []
+
+        return {
+            "ok": True,
+            "message": f"连接成功，耗时 {elapsed_ms} ms",
+            "models": model_ids,
+        }
+    except AuthenticationError as e:
+        return {"ok": False, "message": f"认证失败：{e}"}
+    except (APIConnectionError, APITimeoutError) as e:
+        return {"ok": False, "message": f"连接失败/超时：{e}"}
+    except APIError as e:
+        return {"ok": False, "message": f"服务异常：{e}"}
+    except Exception as e:
+        return {"ok": False, "message": f"未知错误：{repr(e)}"}
 
 
 def call_deepseek_ga_for_chunks(

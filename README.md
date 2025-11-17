@@ -37,6 +37,7 @@
 
 ## API 说明
 - `GET /`：返回首页 HTML。
+- `GET /api/deepseek-health`：检测 DeepSeek/GPUStack 连接与鉴权是否可用，返回 `ok` 和原因提示。
 - `POST /api/generate-ga-from-file`：表单上传 JSON 分片并生成 GA 对。
   - 字段：`file`（上传文件）、`chunk_indices`（如 `0,1,2`）、`num_questions`、`system_prompt`。
 - `POST /api/generate-ga`：纯 JSON 请求版。

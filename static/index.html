@@ -180,6 +180,36 @@
       margin-left: auto;
     }
 
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f2f4f8;
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-size: 13px;
+      min-height: 36px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #a3a3a3;
+      box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.12);
+      transition: all 0.2s ease;
+    }
+
     details summary {
       cursor: pointer;
       color: var(--brand-strong);
@@ -316,6 +346,13 @@
         <h2>① 上传 JSON 分片 &amp; 生成 GA 对</h2>
         <span class="pill">自动识别分片数量</span>
       </div>
+      <div class="status-row">
+        <div class="status-pill" id="connection-pill">
+          <span class="status-dot" id="connection-dot"></span>
+          <span id="connection-text">正在检测 DeepSeek 连接…</span>
+        </div>
+        <button type="button" class="ghost" id="retry-connection">重新检测</button>
+      </div>
       <form id="ga-form">
         <div class="form-grid">
           <div>
@@ -403,6 +440,7 @@
   <script>
     let currentGAPairs = [];
     let progressTimer = null;
+    let checkingConnection = false;
 
     function renderTable() {
       const table = document.getElementById('ga-table');
@@ -549,6 +587,55 @@
       banner.innerHTML = errors.map(e => `<div class="error-line">⚠️ ${e}</div>`).join('');
     }
 
+    function setConnectionState({ status, message }) {
+      const pill = document.getElementById('connection-pill');
+      const dot = document.getElementById('connection-dot');
+      const text = document.getElementById('connection-text');
+
+      text.textContent = message;
+
+      if (status === 'ok') {
+        pill.style.background = '#edfff5';
+        pill.style.borderColor = '#b7f2d0';
+        dot.style.background = 'var(--accent)';
+        dot.style.boxShadow = '0 0 0 6px rgba(52, 199, 89, 0.22)';
+      } else if (status === 'checking') {
+        pill.style.background = '#f2f4f8';
+        pill.style.borderColor = '#e5e7eb';
+        dot.style.background = '#0a84ff';
+        dot.style.boxShadow = '0 0 0 6px rgba(10, 132, 255, 0.18)';
+      } else {
+        pill.style.background = '#fff2f2';
+        pill.style.borderColor = '#ffcccc';
+        dot.style.background = '#ff3b30';
+        dot.style.boxShadow = '0 0 0 6px rgba(255, 59, 48, 0.18)';
+      }
+    }
+
+    function checkConnection(showToastOnError = false) {
+      if (checkingConnection) return;
+      checkingConnection = true;
+      setConnectionState({ status: 'checking', message: '正在检测 DeepSeek 连接…' });
+
+      fetch('/api/deepseek-health')
+        .then(res => res.json())
+        .then(data => {
+          if (data.ok) {
+            const extra = data.models?.length ? `（可用模型示例：${data.models.join(', ')}）` : '';
+            setConnectionState({ status: 'ok', message: `${data.message}${extra}` });
+          } else {
+            setConnectionState({ status: 'error', message: data.message || '连接失败，请检查 API Key 或 Base URL。' });
+            if (showToastOnError) alert(data.message || '连接 DeepSeek 失败');
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          setConnectionState({ status: 'error', message: '无法连接后端，请检查服务是否启动。' });
+          if (showToastOnError) alert('无法连接后端，请检查服务是否启动。');
+        })
+        .finally(() => { checkingConnection = false; });
+    }
+
     function parseChunksLength(jsonData) {
       if (Array.isArray(jsonData)) return jsonData.length;
       if (jsonData && Array.isArray(jsonData.chunks)) return jsonData.chunks.length;
@@ -585,6 +672,13 @@
       };
       reader.readAsText(file, 'utf-8');
     });
+
+    document.getElementById('retry-connection').addEventListener('click', () => {
+      checkConnection(true);
+    });
+
+    // 页面加载后立即检测一次连接
+    checkConnection();
 
     document.getElementById('ga-form').addEventListener('submit', function (e) {
       e.preventDefault();
