@@ -385,8 +385,8 @@
   * 问题围绕定义、数值、范围、原则、做法等
   * 答案准确、简洁，可直接作为标准答案
   * 每道题带原文摘录、来源定位
-  * 输出为 {"ga_pairs": [...]} 的 JSON
-- 题型：包含单选题、多选题、判断题和简答题等各种题型
+  * 输出为 {"ga_pairs": [...]} 的 JSON，包含 question_type、options、ga_answer 等字段
+- 题型：包含单选题、多选题、判断题和简答题；选择题需给出 A~D(或至多 A~F) 选项
               </pre>
             </details>
           </div>
@@ -415,7 +415,9 @@
           <tr>
             <th>#</th>
             <th>ID</th>
+            <th>题型（question_type）</th>
             <th>题目（question）</th>
+            <th>选项（options，按行分隔）</th>
             <th>答案（ga_answer）</th>
             <th>难度（difficulty）</th>
             <th>来源定位（source_locator）</th>
@@ -489,12 +491,29 @@
         tdId.appendChild(inputId);
         tr.appendChild(tdId);
 
+        const tdType = document.createElement('td');
+        const inputType = document.createElement('input');
+        inputType.type = 'text';
+        inputType.className = 'field-question-type small-input';
+        inputType.placeholder = 'single_choice / multiple_choice / true_false / short_answer';
+        inputType.value = p.question_type || '';
+        tdType.appendChild(inputType);
+        tr.appendChild(tdType);
+
         const tdQ = document.createElement('td');
         const taQ = document.createElement('textarea');
         taQ.className = 'field-question';
         taQ.value = p.question || '';
         tdQ.appendChild(taQ);
         tr.appendChild(tdQ);
+
+        const tdOptions = document.createElement('td');
+        const taOptions = document.createElement('textarea');
+        taOptions.className = 'field-options';
+        taOptions.placeholder = '仅选择题填写，一行一个选项，如 A. xxx';
+        taOptions.value = Array.isArray(p.options) ? p.options.join('\n') : (p.options || '');
+        tdOptions.appendChild(taOptions);
+        tr.appendChild(tdOptions);
 
         const tdA = document.createElement('td');
         const taA = document.createElement('textarea');
@@ -545,7 +564,13 @@
       const result = [];
       rows.forEach((tr, idx) => {
         const id = tr.querySelector('.field-id').value || ('q' + (idx + 1));
+        const question_type = tr.querySelector('.field-question-type').value;
         const question = tr.querySelector('.field-question').value;
+        const optionsRaw = tr.querySelector('.field-options').value || '';
+        const options = optionsRaw
+          .split('\n')
+          .map(opt => opt.trim())
+          .filter(Boolean);
         const ga_answer = tr.querySelector('.field-ga-answer').value;
         const difficulty = tr.querySelector('.field-difficulty').value;
         const source_locator = tr.querySelector('.field-source-locator').value;
@@ -554,7 +579,9 @@
 
         result.push({
           id,
+          question_type,
           question,
+          options,
           ga_answer,
           difficulty,
           source_locator,
