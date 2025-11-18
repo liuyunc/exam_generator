@@ -120,6 +120,51 @@
       font-size: 12px;
     }
 
+    .upload-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #json-file {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+
+    .upload-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 12px;
+      background: linear-gradient(145deg, #f6f7fb, #e6e8ef);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      color: #0a84ff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.18s ease, background 0.18s ease;
+    }
+
+    .upload-btn:hover { transform: translateY(-1px); }
+
+    .upload-btn:active {
+      transform: translateY(0);
+      background: linear-gradient(145deg, #eaeef5, #dfe3ed);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    }
+
+    .upload-filename {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
     .button-row {
       display: flex;
       align-items: center;
@@ -186,6 +231,43 @@
       gap: 10px;
       margin-top: 8px;
       flex-wrap: wrap;
+    }
+
+    .status-log {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f8fbff, #eef2f7);
+      border: 1px dashed var(--border);
+      font-size: 13px;
+      color: #1f2937;
+      max-height: 210px;
+      overflow-y: auto;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+    }
+
+    .status-line + .status-line {
+      margin-top: 6px;
+    }
+
+    .status-line {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      line-height: 1.5;
+    }
+
+    .status-bullet {
+      margin-top: 6px;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0a84ff;
+      flex-shrink: 0;
+    }
+
+    .status-line.muted {
+      color: var(--muted);
     }
 
     .status-pill {
@@ -353,12 +435,19 @@
         </div>
         <button type="button" class="ghost" id="retry-connection">重新检测</button>
       </div>
+      <div class="status-log" id="status-log">
+        <div class="status-line muted"><span class="status-bullet"></span><span>等待任务开始…</span></div>
+      </div>
       <form id="ga-form">
         <div class="form-grid">
           <div>
             <label>上传 JSON 文件</label>
-            <input type="file" name="file" id="json-file" required />
-            <div class="hint">支持直接 list 或 {"chunks": [...]} 结构</div>
+            <div class="upload-row">
+              <label for="json-file" class="upload-btn"> 上传文件</label>
+              <span class="upload-filename" id="upload-filename">未选择文件</span>
+              <input type="file" name="file" id="json-file" accept="application/json,.json" required />
+            </div>
+            <div class="hint">仅支持 JSON（list 或 {"chunks": [...]} 结构）</div>
           </div>
           <div>
             <label>题目总数量（GA 对数）</label>
@@ -443,6 +532,7 @@
     let currentGAPairs = [];
     let progressTimer = null;
     let checkingConnection = false;
+    let statusLogLines = [];
 
     function loadDefaultSystemPrompt() {
       const textarea = document.getElementById('system-prompt');
@@ -631,6 +721,32 @@
       banner.innerHTML = errors.map(e => `<div class="error-line">⚠️ ${e}</div>`).join('');
     }
 
+    function renderStatusLog(lines = []) {
+      const box = document.getElementById('status-log');
+      statusLogLines = Array.isArray(lines) ? [...lines] : [];
+      if (!box) return;
+
+      box.innerHTML = '';
+
+      const latest = statusLogLines.length ? statusLogLines[statusLogLines.length - 1] : '';
+
+      const line = document.createElement('div');
+      line.className = latest ? 'status-line' : 'status-line muted';
+      const bullet = document.createElement('span');
+      bullet.className = 'status-bullet';
+      const text = document.createElement('span');
+      text.textContent = latest || '等待任务开始…';
+      line.append(bullet, text);
+      box.appendChild(line);
+
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function appendStatusLog(text) {
+      if (!text) return;
+      renderStatusLog([text]);
+    }
+
     function setConnectionState({ status, message }) {
       const pill = document.getElementById('connection-pill');
       const dot = document.getElementById('connection-dot');
@@ -688,13 +804,17 @@
 
     document.getElementById('json-file').addEventListener('change', (e) => {
       const info = document.getElementById('chunk-info');
+      const filename = document.getElementById('upload-filename');
       const input = document.getElementById('chunk-indices');
       const file = e.target.files?.[0];
       if (!file) {
         info.textContent = '等待文件解析…';
         input.value = '';
+        if (filename) filename.textContent = '未选择文件';
         return;
       }
+
+      if (filename) filename.textContent = file.name;
 
       const reader = new FileReader();
       reader.onload = function(evt) {
@@ -734,7 +854,8 @@
         return;
       }
 
-        startProgress();
+      renderStatusLog(['开始处理文件上传…']);
+      startProgress();
 
         const formData = new FormData();
         formData.append('file', fileInput.files[0]);
@@ -753,11 +874,17 @@
             currentGAPairs = data.ga_pairs || [];
             renderTable();
             showErrors(errors);
+            if (Array.isArray(data.logs)) {
+              renderStatusLog(data.logs);
+            } else {
+              appendStatusLog('处理完成');
+            }
           })
           .catch(err => {
             console.error(err);
             finishProgress(false);
             showErrors(['网络异常或后端不可用，请稍后重试。']);
+            appendStatusLog('生成失败，请检查后端日志。');
             alert('生成 GA 对失败，请检查后端日志。');
           });
       });
