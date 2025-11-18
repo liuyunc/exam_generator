@@ -20,7 +20,7 @@ from openai import (
 )
 
 from prompts import GA_SYSTEM_PROMPT, build_ga_user_prompt
-from docx_utils import build_docx_from_ga
+from docx_utils import build_docx_from_ga, sort_ga_pairs_by_type
 
 # ========= 配置：gpustuck DeepSeek =========
 
@@ -459,7 +459,8 @@ async def generate_ga_from_file(
 async def export_docx(req: ExportDocxRequest):
     """接收前端编辑好的 GA 对，生成 DOCX 下载"""
     ga_pairs_dicts = [p.dict() for p in req.ga_pairs]
-    doc = build_docx_from_ga(ga_pairs_dicts, title=req.title)
+    sorted_ga_pairs = sort_ga_pairs_by_type(ga_pairs_dicts)
+    doc = build_docx_from_ga(sorted_ga_pairs, title=req.title)
 
     buffer = BytesIO()
     doc.save(buffer)
