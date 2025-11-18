@@ -442,6 +442,23 @@
     let progressTimer = null;
     let checkingConnection = false;
 
+    function loadDefaultSystemPrompt() {
+      const textarea = document.getElementById('system-prompt');
+      if (!textarea) return;
+
+      fetch('/api/system-prompt')
+        .then(res => res.json())
+        .then(data => {
+          if (!data || !data.system_prompt) return;
+          if (!textarea.value.trim()) {
+            textarea.value = data.system_prompt;
+          }
+        })
+        .catch(err => {
+          console.error('加载默认 System Prompt 失败：', err);
+        });
+    }
+
     function renderTable() {
       const table = document.getElementById('ga-table');
       const tbody = document.getElementById('ga-table-body');
@@ -679,6 +696,7 @@
 
     // 页面加载后立即检测一次连接
     checkConnection();
+    loadDefaultSystemPrompt();
 
     document.getElementById('ga-form').addEventListener('submit', function (e) {
       e.preventDefault();
