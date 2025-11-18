@@ -28,10 +28,26 @@
    - `GPUSTACK_MAX_RETRIES`：连接/超时重试次数，默认 `2`。
 3. 启动服务
    ```bash
-   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   uvicorn main:app --reload --host 0.0.0.0 --port 8833
    ```
+
+### Docker 运行
+1. 构建镜像
+   ```bash
+   docker build -t exam-generator:latest .
+   ```
+2. 运行容器（请在环境变量中提供 GPUSTACK_API_KEY 等配置）
+   ```bash
+   docker run -p 8833:8833 \
+     -e GPUSTACK_API_KEY=YOUR_API_KEY \
+     -e GPUSTACK_BASE_URL=http://10.20.40.101/v1 \
+     -e DEEPSEEK_MODEL_NAME=deepseek-r1 \
+     exam-generator:latest
+   ```
+3. 浏览器访问 `http://localhost:8833/static`。
+
 4. 使用
-   - 浏览器访问 `http://localhost:8000/static` 进入页面。
+   - 浏览器访问 `http://localhost:8833/static` 进入页面。
    - 上传 JSON 分片、填写分片索引与题量（默认 20），可选自定义 System Prompt。
    - 生成后的 GA 对可在表格中直接编辑，再点击“导出 DOCX”。
 

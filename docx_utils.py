@@ -22,6 +22,24 @@ def _normalize_options(raw: object) -> List[str]:
     return []
 
 
+def sort_ga_pairs_by_type(ga_pairs: List[dict]) -> List[dict]:
+    """按题型分类排序，顺序为单选、多选、判断、简答。"""
+
+    order_map = {
+        "single_choice": 0,
+        "multiple_choice": 1,
+        "true_false": 2,
+        "short_answer": 3,
+    }
+
+    def sort_key(item_with_idx):
+        idx, qa = item_with_idx
+        q_type = (qa.get("question_type") or "").strip()
+        return order_map.get(q_type, len(order_map)), idx
+
+    return [qa for _, qa in sorted(enumerate(ga_pairs), key=sort_key)]
+
+
 def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原文引用）"):
     """
     ga_pairs: List[dict]，字段：
