@@ -254,7 +254,7 @@ def call_deepseek_ga_single_chunk(
         except (APITimeoutError, APIConnectionError) as e:
             last_error = f"调用超时/连接异常：{repr(e)}"
             log_fn(
-                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；",
+                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；"
                 f" 超时设置 {GPUSTACK_TIMEOUT}s"
             )
             if attempt == GPUSTACK_MAX_RETRIES:

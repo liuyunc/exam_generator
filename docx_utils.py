@@ -4,7 +4,8 @@ import re
 
 from docx import Document
 from docx.shared import Pt
-from typing import List, Sequence
+from docx.oxml.ns import qn
+from typing import Dict, List, Sequence
 
 
 def _normalize_options(raw: object) -> List[str]:
@@ -36,15 +37,56 @@ def _sanitize_math_markdown(text: str) -> str:
         content = re.sub(r"\\operatorname\{([^}]+)\}", r"\1", content)
         content = re.sub(r"_\{([^}]+)\}", r"_\1", content)
         content = re.sub(r"\^\{([^}]+)\}", r"^\1", content)
+        content = re.sub(r"\\text\{([^}]+)\}", r"\1", content)
+        # 清理 \left / \right 之类的定界符标记
+        content = re.sub(r"\\(left|right|bigl|bigr|Bigl|Bigr|biggl|biggr|Biggl|Biggr)", "", content)
         # 去掉剩余的反斜杠标记（如 \mathrm、\alpha -> alpha）
         content = re.sub(r"\\([a-zA-Z]+)", r"\1", content)
         return content.replace("{", "").replace("}", "")
 
-    # 处理 $...$ 包裹的行内公式
-    text = re.sub(r"\$(.+?)\$", lambda m: _clean_math_content(m.group(1)), text)
+    # 处理 $...$、$$...$$、\(...\)、\[...\] 包裹的公式
+    inline_patterns = [
+        r"\$(.+?)\$",
+        r"\$\$(.+?)\$\$",
+        r"\\\((.+?)\\\)",
+        r"\\\[(.+?)\\\]",
+    ]
+    for pattern in inline_patterns:
+        text = re.sub(pattern, lambda m: _clean_math_content(m.group(1)), text)
     # 再兜底清理未成对的 \mathrm{} 等
     text = _clean_math_content(text)
     return text
+
+
+QUESTION_TYPE_MAP: Dict[str, str] = {
+    "single_choice": "【单选题】",
+    "multiple_choice": "【多选题】",
+    "true_false": "【判断题】",
+    "short_answer": "【简答题】",
+}
+
+
+def _render_question_type(raw: str) -> str:
+    """兼容 minerU 解析与 GA 输出的题型标记，统一为中文展示。"""
+
+    key = (raw or "").strip().lower()
+    # 题面中可能出现 [single_choice] 形式，直接替换。
+    bracket_clean = re.sub(r"^\[(.+)\]$", r"\1", key)
+    mapped = QUESTION_TYPE_MAP.get(bracket_clean, "")
+    return mapped or raw
+
+
+def _replace_type_tokens(text: str) -> str:
+    """将题干中的 [single_choice] 等占位替换为中文题型标签。"""
+
+    if not text:
+        return ""
+
+    def _sub(match):
+        inner = match.group(1).lower()
+        return QUESTION_TYPE_MAP.get(inner, match.group(0))
+
+    return re.sub(r"\[([a-z_]+)\]", _sub, text)
 
 
 def sort_ga_pairs_by_type(ga_pairs: List[dict]) -> List[dict]:
@@ -75,7 +117,14 @@ def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "宋体"
+    style.element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
     style.font.size = Pt(11)
+
+    for heading_style in ["Heading 1", "Heading 2", "Heading 3"]:
+        if heading_style in doc.styles:
+            h_style = doc.styles[heading_style]
+            h_style.font.name = "宋体"
+            h_style.element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
 
     # 标题
     doc.add_heading(title, level=1)
@@ -83,14 +132,18 @@ def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原
     # 一、试题（不含答案）
     doc.add_heading("一、试题（不含答案）", level=2)
     for idx, qa in enumerate(ga_pairs, start=1):
-        q = _sanitize_math_markdown((qa.get("question") or "").strip())
-        question_type = _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        q = _replace_type_tokens(
+            _sanitize_math_markdown((qa.get("question") or "").strip())
+        )
+        question_type = _render_question_type(
+            _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        )
         options = [_sanitize_math_markdown(opt) for opt in _normalize_options(qa.get("options"))]
 
         p = doc.add_paragraph()
         prefix = f"{idx}. "
         if question_type:
-            prefix += f"[{question_type}] "
+            prefix += f"{question_type} "
         p.add_run(f"{prefix}{q}")
 
         for opt in options:
@@ -102,9 +155,13 @@ def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原
     # 二、参考答案与原文引用
     doc.add_heading("二、参考答案与原文引用", level=2)
     for idx, qa in enumerate(ga_pairs, start=1):
-        q = _sanitize_math_markdown((qa.get("question") or "").strip())
+        q = _replace_type_tokens(
+            _sanitize_math_markdown((qa.get("question") or "").strip())
+        )
         a = _sanitize_math_markdown((qa.get("ga_answer") or "").strip())
-        question_type = _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        question_type = _render_question_type(
+            _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        )
         options = [_sanitize_math_markdown(opt) for opt in _normalize_options(qa.get("options"))]
         difficulty = _sanitize_math_markdown((qa.get("difficulty") or "").strip())
         source_excerpt = _sanitize_math_markdown((qa.get("source_excerpt") or "").strip())
