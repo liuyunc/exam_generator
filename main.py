@@ -324,6 +324,13 @@ async def deepseek_health():
         return {"ok": False, "message": f"未知错误：{repr(e)}"}
 
 
+@app.get("/api/system-prompt")
+async def get_system_prompt():
+    """返回后端默认的 System Prompt，便于前端展示与编辑。"""
+
+    return {"system_prompt": GA_SYSTEM_PROMPT}
+
+
 def call_deepseek_ga_for_chunks(
     chunk_items: list,
     total_questions: int,
