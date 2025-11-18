@@ -1,5 +1,7 @@
 # docx_utils.py
 
+import re
+
 from docx import Document
 from docx.shared import Pt
 from typing import List, Sequence
@@ -20,6 +22,29 @@ def _normalize_options(raw: object) -> List[str]:
                 result.append(text)
         return result
     return []
+
+
+def _sanitize_math_markdown(text: str) -> str:
+    """尽量将 Markdown/LaTeX 形式的公式转为可读文本，避免 Word 中保留 $ 符号。"""
+
+    if not text:
+        return ""
+
+    def _clean_math_content(content: str) -> str:
+        # 去除常见的 LaTeX 包裹符号
+        content = re.sub(r"\\mathrm\{([^}]+)\}", r"\1", content)
+        content = re.sub(r"\\operatorname\{([^}]+)\}", r"\1", content)
+        content = re.sub(r"_\{([^}]+)\}", r"_\1", content)
+        content = re.sub(r"\^\{([^}]+)\}", r"^\1", content)
+        # 去掉剩余的反斜杠标记（如 \mathrm、\alpha -> alpha）
+        content = re.sub(r"\\([a-zA-Z]+)", r"\1", content)
+        return content.replace("{", "").replace("}", "")
+
+    # 处理 $...$ 包裹的行内公式
+    text = re.sub(r"\$(.+?)\$", lambda m: _clean_math_content(m.group(1)), text)
+    # 再兜底清理未成对的 \mathrm{} 等
+    text = _clean_math_content(text)
+    return text
 
 
 def sort_ga_pairs_by_type(ga_pairs: List[dict]) -> List[dict]:
@@ -58,9 +83,9 @@ def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原
     # 一、试题（不含答案）
     doc.add_heading("一、试题（不含答案）", level=2)
     for idx, qa in enumerate(ga_pairs, start=1):
-        q = (qa.get("question") or "").strip()
-        question_type = (qa.get("question_type") or "").strip()
-        options = _normalize_options(qa.get("options"))
+        q = _sanitize_math_markdown((qa.get("question") or "").strip())
+        question_type = _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        options = [_sanitize_math_markdown(opt) for opt in _normalize_options(qa.get("options"))]
 
         p = doc.add_paragraph()
         prefix = f"{idx}. "
@@ -77,14 +102,14 @@ def build_docx_from_ga(ga_pairs, title: str = "培训考试题（含答案与原
     # 二、参考答案与原文引用
     doc.add_heading("二、参考答案与原文引用", level=2)
     for idx, qa in enumerate(ga_pairs, start=1):
-        q = (qa.get("question") or "").strip()
-        a = (qa.get("ga_answer") or "").strip()
-        question_type = (qa.get("question_type") or "").strip()
-        options = _normalize_options(qa.get("options"))
-        difficulty = (qa.get("difficulty") or "").strip()
-        source_excerpt = (qa.get("source_excerpt") or "").strip()
-        locator = (qa.get("source_locator") or "").strip()
-        comment = (qa.get("comment") or "").strip()
+        q = _sanitize_math_markdown((qa.get("question") or "").strip())
+        a = _sanitize_math_markdown((qa.get("ga_answer") or "").strip())
+        question_type = _sanitize_math_markdown((qa.get("question_type") or "").strip())
+        options = [_sanitize_math_markdown(opt) for opt in _normalize_options(qa.get("options"))]
+        difficulty = _sanitize_math_markdown((qa.get("difficulty") or "").strip())
+        source_excerpt = _sanitize_math_markdown((qa.get("source_excerpt") or "").strip())
+        locator = _sanitize_math_markdown((qa.get("source_locator") or "").strip())
+        comment = _sanitize_math_markdown((qa.get("comment") or "").strip())
 
         doc.add_paragraph(f"{idx}. 题目：{q}")
         if question_type:
