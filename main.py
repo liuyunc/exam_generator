@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import FastAPI, UploadFile, Form, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import time
 
 from openai import (
@@ -117,6 +117,8 @@ async def index():
 
 class GAPair(BaseModel):
     id: Optional[str] = None
+    question_type: Optional[str] = ""
+    options: Optional[List[str]] = Field(default_factory=list)
     question: str
     ga_answer: str
     difficulty: Optional[str] = ""
