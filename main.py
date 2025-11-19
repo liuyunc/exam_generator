@@ -1,5 +1,6 @@
 # main.py
 
+import asyncio
 import json
 import os
 from io import BytesIO
@@ -409,60 +410,107 @@ async def generate_ga_from_file(
     system_prompt: str = Form("", description="自定义 system prompt，可留空使用默认"),
 ):
     """
-    网页表单接口：
+    网页表单接口（支持流式返回日志）：
     - 上传 JSON 分片文件
     - 指定要使用的分片索引（逗号分隔）
     - 指定题目总数量
     - 可选：自定义提示词
     """
+
+    # 用于前端实时展示：将日志/结果放入队列，StreamingResponse 边产生边下发
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
     logs: List[str] = []
+    loop = asyncio.get_running_loop()
+
+    def enqueue(payload: dict):
+        """把事件写入队列，前端按行解析（线程安全）。"""
+
+        loop.call_soon_threadsafe(
+            queue.put_nowait, json.dumps(payload, ensure_ascii=False)
+        )
 
     def log_and_collect(msg: str):
         logs.append(str(msg))
         print(msg)
+        enqueue({"type": "log", "message": str(msg)})
 
-    log_and_collect("开始处理文件上传...")
     raw = await file.read()
-    chunks = json.loads(raw)
-    log_and_collect("文件解析完成")
 
-    # 支持：顶层是 {'chunks': [...]} 或直接是 list
-    if isinstance(chunks, dict) and "chunks" in chunks:
-        chunks_list = chunks["chunks"]
-    else:
-        chunks_list = chunks
-
-    # 解析索引
-    indices = []
-    for part in chunk_indices.split(","):
-        part = part.strip()
-        if not part:
-            continue
+    async def producer():
         try:
-            idx = int(part)
-            indices.append(idx)
-        except ValueError:
-            continue
+            def generate():
+                log_and_collect("开始处理文件上传…")
+                chunks = json.loads(raw)
+                log_and_collect("文件解析完成")
 
-    if not indices:
-        indices = list(range(len(chunks_list)))
-        log_and_collect(
-            f"未显式指定分片索引，自动使用全部 {len(chunks_list)} 个分片: {indices}"
-        )
-    else:
-        log_and_collect(f"解析到 {len(indices)} 个分片索引: {indices}")
-    chunk_items = extract_chunk_items(chunks_list, indices)
-    log_and_collect(f"提取到 {len(chunk_items)} 个有效分片")
+                # 支持：顶层是 {'chunks': [...]} 或直接是 list
+                if isinstance(chunks, dict) and "chunks" in chunks:
+                    chunks_list = chunks["chunks"]
+                else:
+                    chunks_list = chunks
 
-    ga_pairs, errors = call_deepseek_ga_for_chunks(
-        chunk_items,
-        total_questions=num_questions,
-        system_prompt=system_prompt if system_prompt.strip() else None,
-        log_fn=log_and_collect,
-    )
+                # 解析索引
+                indices = []
+                for part in chunk_indices.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    try:
+                        idx = int(part)
+                        indices.append(idx)
+                    except ValueError:
+                        continue
 
-    log_and_collect(f"生成完成，共生成 {len(ga_pairs)} 道题目；错误 {len(errors)} 条")
-    return {"ga_pairs": ga_pairs, "errors": errors, "logs": logs}
+                if not indices:
+                    indices = list(range(len(chunks_list)))
+                    log_and_collect(
+                        f"未显式指定分片索引，自动使用全部 {len(chunks_list)} 个分片: {indices}"
+                    )
+                else:
+                    log_and_collect(f"解析到 {len(indices)} 个分片索引: {indices}")
+                chunk_items = extract_chunk_items(chunks_list, indices)
+                log_and_collect(f"提取到 {len(chunk_items)} 个有效分片")
+
+                ga_pairs, errors = call_deepseek_ga_for_chunks(
+                    chunk_items,
+                    total_questions=num_questions,
+                    system_prompt=system_prompt if system_prompt.strip() else None,
+                    log_fn=log_and_collect,
+                )
+
+                log_and_collect(
+                    f"生成完成，共生成 {len(ga_pairs)} 道题目；错误 {len(errors)} 条"
+                )
+
+                enqueue(
+                    {
+                        "type": "result",
+                        "ga_pairs": ga_pairs,
+                        "errors": errors,
+                        "logs": logs,
+                    }
+                )
+
+            # 在线程中执行耗时/阻塞的同步 DeepSeek 调用，避免卡住事件循环导致前端无法即时收到日志
+            await asyncio.to_thread(generate)
+        except Exception as e:
+            error_msg = f"生成失败：{repr(e)}"
+            log_and_collect(error_msg)
+            enqueue({"type": "error", "message": error_msg, "logs": logs})
+        finally:
+            # 结束标记
+            await queue.put(None)
+
+    asyncio.create_task(producer())
+
+    async def event_stream():
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item + "\n"
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
 @app.post("/export-docx")

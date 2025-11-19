@@ -869,30 +869,73 @@
         formData.append('num_questions', document.getElementById('num-questions').value);
         formData.append('system_prompt', document.getElementById('system-prompt').value);
 
-        fetch('/api/generate-ga-from-file', {
-          method: 'POST',
-          body: formData
-        })
-          .then(res => res.json())
-          .then(data => {
-            const errors = data.errors || [];
-            finishProgress(errors.length === 0);
-            currentGAPairs = data.ga_pairs || [];
-            renderTable();
-            showErrors(errors);
-            if (Array.isArray(data.logs)) {
-              renderStatusLog(data.logs);
-            } else {
-              appendStatusLog('处理完成');
+      fetch('/api/generate-ga-from-file', {
+        method: 'POST',
+        body: formData
+      })
+        .then(async res => {
+          if (!res.body) throw new Error('响应流不可用');
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder('utf-8');
+          let buffer = '';
+
+          const handleMessage = (payload) => {
+            if (!payload || typeof payload !== 'object') return;
+
+            if (payload.type === 'log') {
+              appendStatusLog(payload.message || '');
+            } else if (payload.type === 'result') {
+              const errors = payload.errors || [];
+              finishProgress(errors.length === 0);
+              currentGAPairs = payload.ga_pairs || [];
+              renderTable();
+              showErrors(errors);
+              if (Array.isArray(payload.logs)) {
+                renderStatusLog(payload.logs);
+              } else {
+                appendStatusLog('处理完成');
+              }
+            } else if (payload.type === 'error') {
+              finishProgress(false);
+              const message = payload.message || '生成失败，请检查后端日志。';
+              showErrors([message]);
+              appendStatusLog(message);
             }
-          })
-          .catch(err => {
-            console.error(err);
+          };
+
+          while (true) {
+            const { value, done } = await reader.read();
+            buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const payload = JSON.parse(line);
+                handleMessage(payload);
+              } catch (err) {
+                console.error('解析流式响应失败：', err, line);
+              }
+            }
+
+            if (done) break;
+          }
+
+          // 防御：若流未返回 result，仍给出提示
+          if (!currentGAPairs.length && statusLogLines.length === 0) {
+            appendStatusLog('任务已结束，未获取到结果，请检查后端日志。');
             finishProgress(false);
-            showErrors(['网络异常或后端不可用，请稍后重试。']);
-            appendStatusLog('生成失败，请检查后端日志。');
-            alert('生成 GA 对失败，请检查后端日志。');
-          });
+          }
+        })
+        .catch(err => {
+          console.error(err);
+          finishProgress(false);
+          showErrors(['网络异常或后端不可用，请稍后重试。']);
+          appendStatusLog('生成失败，请检查后端日志。');
+          alert('生成 GA 对失败，请检查后端日志。');
+        });
       });
 
     document.getElementById('export-docx-btn').addEventListener('click', function () {
