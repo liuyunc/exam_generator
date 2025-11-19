@@ -721,30 +721,36 @@
       banner.innerHTML = errors.map(e => `<div class="error-line">⚠️ ${e}</div>`).join('');
     }
 
-    function renderStatusLog(lines = []) {
+    function renderStatusLog(lines = [], { append = false } = {}) {
       const box = document.getElementById('status-log');
-      statusLogLines = Array.isArray(lines) ? [...lines] : [];
       if (!box) return;
+
+      if (Array.isArray(lines) && lines.length) {
+        statusLogLines = append ? [...statusLogLines, ...lines] : [...lines];
+      } else if (!append) {
+        statusLogLines = [];
+      }
 
       box.innerHTML = '';
 
-      const latest = statusLogLines.length ? statusLogLines[statusLogLines.length - 1] : '';
-
-      const line = document.createElement('div');
-      line.className = latest ? 'status-line' : 'status-line muted';
-      const bullet = document.createElement('span');
-      bullet.className = 'status-bullet';
-      const text = document.createElement('span');
-      text.textContent = latest || '等待任务开始…';
-      line.append(bullet, text);
-      box.appendChild(line);
+      const list = statusLogLines.length ? statusLogLines : ['等待任务开始…'];
+      list.forEach((msg, idx) => {
+        const line = document.createElement('div');
+        line.className = idx === list.length - 1 && statusLogLines.length ? 'status-line' : 'status-line muted';
+        const bullet = document.createElement('span');
+        bullet.className = 'status-bullet';
+        const text = document.createElement('span');
+        text.textContent = msg;
+        line.append(bullet, text);
+        box.appendChild(line);
+      });
 
       box.scrollTop = box.scrollHeight;
     }
 
     function appendStatusLog(text) {
       if (!text) return;
-      renderStatusLog([text]);
+      renderStatusLog([text], { append: true });
     }
 
     function setConnectionState({ status, message }) {
