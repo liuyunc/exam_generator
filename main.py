@@ -3,7 +3,7 @@
 import json
 import os
 from io import BytesIO
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from fastapi import FastAPI, UploadFile, Form, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -231,6 +231,7 @@ def call_deepseek_ga_single_chunk(
     text_for_model: str,
     num_questions: int,
     system_prompt: Optional[str] = None,
+    log_fn: Callable[[str], None] = print,
 ):
     """针对单个分片调用 DeepSeek 生成 GA 对（带更稳健的 JSON 解析）"""
     sys_prompt = system_prompt.strip() if system_prompt else GA_SYSTEM_PROMPT
@@ -252,8 +253,8 @@ def call_deepseek_ga_single_chunk(
             break
         except (APITimeoutError, APIConnectionError) as e:
             last_error = f"调用超时/连接异常：{repr(e)}"
-            print(
-                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；",
+            log_fn(
+                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；"
                 f" 超时设置 {GPUSTACK_TIMEOUT}s"
             )
             if attempt == GPUSTACK_MAX_RETRIES:
@@ -261,11 +262,11 @@ def call_deepseek_ga_single_chunk(
             time.sleep(min(2 * attempt, 6))
         except APIError as e:
             last_error = f"服务器返回错误：{repr(e)}"
-            print(f"[DeepSeek] 服务器返回错误：{repr(e)}")
+            log_fn(f"[DeepSeek] 服务器返回错误：{repr(e)}")
             return [], last_error
         except Exception as e:
             last_error = f"API调用失败：{repr(e)}"
-            print(f"API调用失败：{repr(e)}")
+            log_fn(f"API调用失败：{repr(e)}")
             return [], last_error
 
     if resp is None:
@@ -282,17 +283,17 @@ def call_deepseek_ga_single_chunk(
             data = extract_json_block_from_content(content)
         except Exception as e:
             # 为了调试方便，把 content 打到后端日志里
-            print("==== 模型原始返回（前 500 字符）====")
-            print(content[:500])
-            print("==== JSON 解析失败原因 ====")
-            print(repr(e))
+            log_fn("==== 模型原始返回（前 500 字符）====")
+            log_fn(content[:500])
+            log_fn("==== JSON 解析失败原因 ====")
+            log_fn(repr(e))
             # 不中断整个流程，返回空列表，让前端至少不 500
             return [], f"模型返回内容无法解析为 JSON：{repr(e)}"
 
     ga_pairs = data.get("ga_pairs", [])
     # 确保是列表
     if not isinstance(ga_pairs, list):
-        print("模型返回中 ga_pairs 不是列表，完整 data：", data)
+        log_fn(f"模型返回中 ga_pairs 不是列表，完整 data： {data}")
         return [], "模型返回中 ga_pairs 不是列表"
     return ga_pairs, None
 
@@ -337,6 +338,7 @@ def call_deepseek_ga_for_chunks(
     chunk_items: list,
     total_questions: int,
     system_prompt: Optional[str] = None,
+    log_fn: Callable[[str], None] = print,
 ):
     """
     按分片分别调用 DeepSeek，再汇总 GA 对：
@@ -357,7 +359,7 @@ def call_deepseek_ga_for_chunks(
         if n_q <= 0:
             continue
 
-        print(f"正在处理分片{item['index']}（{item['title']}），预计生成{n_q}道题目...")
+        log_fn(f"正在处理分片{item['index']}（{item['title']}），预计生成{n_q}道题目...")
         
         header = f"[分片{item['index']}：{item['title']}]\n"
         text_for_model = header + item["text"]
@@ -366,16 +368,17 @@ def call_deepseek_ga_for_chunks(
             text_for_model=text_for_model,
             num_questions=n_q,
             system_prompt=system_prompt,
+            log_fn=log_fn,
         )
 
         if error_msg:
             errors.append(
                 f"分片{item['index']}（{item['title']}）调用 DeepSeek 失败：{error_msg}"
             )
-            print(errors[-1])
+            log_fn(errors[-1])
             continue
 
-        print(f"分片{item['index']}处理完成，实际生成{len(ga_pairs)}道题目")
+        log_fn(f"分片{item['index']}处理完成，实际生成{len(ga_pairs)}道题目")
 
         # 给每个 GA 对附加分片定位（兜底）
         for p in ga_pairs:
@@ -388,7 +391,7 @@ def call_deepseek_ga_for_chunks(
             p["source_locator"] = locator
         all_pairs.extend(ga_pairs)
     
-    print(f"所有分片处理完成，共生成{len(all_pairs)}道题目")
+    log_fn(f"所有分片处理完成，共生成{len(all_pairs)}道题目")
 
     return all_pairs, errors
 
@@ -412,10 +415,16 @@ async def generate_ga_from_file(
     - 指定题目总数量
     - 可选：自定义提示词
     """
-    print("开始处理文件上传...")
+    logs: List[str] = []
+
+    def log_and_collect(msg: str):
+        logs.append(str(msg))
+        print(msg)
+
+    log_and_collect("开始处理文件上传...")
     raw = await file.read()
     chunks = json.loads(raw)
-    print("文件解析完成")
+    log_and_collect("文件解析完成")
 
     # 支持：顶层是 {'chunks': [...]} 或直接是 list
     if isinstance(chunks, dict) and "chunks" in chunks:
@@ -437,22 +446,23 @@ async def generate_ga_from_file(
 
     if not indices:
         indices = list(range(len(chunks_list)))
-        print(
+        log_and_collect(
             f"未显式指定分片索引，自动使用全部 {len(chunks_list)} 个分片: {indices}"
         )
     else:
-        print(f"解析到 {len(indices)} 个分片索引: {indices}")
+        log_and_collect(f"解析到 {len(indices)} 个分片索引: {indices}")
     chunk_items = extract_chunk_items(chunks_list, indices)
-    print(f"提取到 {len(chunk_items)} 个有效分片")
-    
+    log_and_collect(f"提取到 {len(chunk_items)} 个有效分片")
+
     ga_pairs, errors = call_deepseek_ga_for_chunks(
         chunk_items,
         total_questions=num_questions,
         system_prompt=system_prompt if system_prompt.strip() else None,
+        log_fn=log_and_collect,
     )
 
-    print(f"生成完成，共生成 {len(ga_pairs)} 道题目；错误 {len(errors)} 条")
-    return {"ga_pairs": ga_pairs, "errors": errors}
+    log_and_collect(f"生成完成，共生成 {len(ga_pairs)} 道题目；错误 {len(errors)} 条")
+    return {"ga_pairs": ga_pairs, "errors": errors, "logs": logs}
 
 
 @app.post("/export-docx")
