@@ -471,8 +471,8 @@ def _sanitize_math_markdown(text: str) -> str:
         return content.replace("{", "").replace("}", "")
 
     inline_patterns = [
-        r"\$(.+?)\$",
         r"\$\$(.+?)\$\$",
+        r"\$(.+?)\$",
         r"\\\((.+?)\\\)",
         r"\\\[(.+?)\\\]",
     ]
