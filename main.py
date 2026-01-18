@@ -126,6 +126,7 @@ class GAPair(BaseModel):
     question: str
     ga_answer: str
     score: Optional[float] = None
+    tag: Optional[str] = ""
     difficulty: Optional[str] = ""
     source_excerpt: Optional[str] = ""
     source_locator: Optional[str] = ""
@@ -443,14 +444,41 @@ def _normalize_options(options: Optional[List[str] | str]) -> List[str]:
 def _build_analysis_text(pair: GAPair) -> str:
     parts = []
     if pair.difficulty:
-        parts.append(f"【难度】{pair.difficulty}")
+        parts.append(f"【难度】{_sanitize_math_markdown(pair.difficulty)}")
     if pair.source_locator:
-        parts.append(f"【来源定位】{pair.source_locator}")
+        parts.append(f"【来源定位】{_sanitize_math_markdown(pair.source_locator)}")
     if pair.source_excerpt:
-        parts.append(f"【原文摘录】{pair.source_excerpt}")
+        parts.append(f"【原文摘录】{_sanitize_math_markdown(pair.source_excerpt)}")
     if pair.comment:
-        parts.append(f"【命题说明】{pair.comment}")
+        parts.append(f"【命题说明】{_sanitize_math_markdown(pair.comment)}")
     return "  ".join(parts)
+
+
+def _sanitize_math_markdown(text: str) -> str:
+    """将 Markdown/LaTeX 形式的公式转为可读文本，避免 Excel 中保留 $ 符号。"""
+
+    if not text:
+        return ""
+
+    def _clean_math_content(content: str) -> str:
+        content = re.sub(r"\\mathrm\{([^}]+)\}", r"\1", content)
+        content = re.sub(r"\\operatorname\{([^}]+)\}", r"\1", content)
+        content = re.sub(r"_\{([^}]+)\}", r"_\1", content)
+        content = re.sub(r"\^\{([^}]+)\}", r"^\1", content)
+        content = re.sub(r"\\text\{([^}]+)\}", r"\1", content)
+        content = re.sub(r"\\(left|right|bigl|bigr|Bigl|Bigr|biggl|biggr|Biggl|Biggr)", "", content)
+        content = re.sub(r"\\([a-zA-Z]+)", r"\1", content)
+        return content.replace("{", "").replace("}", "")
+
+    inline_patterns = [
+        r"\$\$(.+?)\$\$",
+        r"\$(.+?)\$",
+        r"\\\((.+?)\\\)",
+        r"\\\[(.+?)\\\]",
+    ]
+    for pattern in inline_patterns:
+        text = re.sub(pattern, lambda m: _clean_math_content(m.group(1)), text)
+    return _clean_math_content(text)
 
 
 def build_xlsx_from_ga(ga_pairs: List[GAPair]) -> BytesIO:
@@ -471,6 +499,7 @@ def build_xlsx_from_ga(ga_pairs: List[GAPair]) -> BytesIO:
         "解析",
         "分数",
         "答案",
+        "标签",
     ]
 
     header_fill = PatternFill("solid", fgColor="FFF200")
@@ -499,13 +528,17 @@ def build_xlsx_from_ga(ga_pairs: List[GAPair]) -> BytesIO:
             option_cells = options[:8] + [""] * max(0, 8 - len(options))
             analysis = _build_analysis_text(pair)
             score = "" if pair.score is None else pair.score
+            question = _sanitize_math_markdown(pair.question)
+            answer = _sanitize_math_markdown(pair.ga_answer)
+            tag = _sanitize_math_markdown(pair.tag or "")
             row = [
                 index,
-                pair.question,
-                *option_cells,
+                question,
+                *[_sanitize_math_markdown(opt) for opt in option_cells],
                 analysis,
                 score,
-                pair.ga_answer,
+                answer,
+                tag,
             ]
             ws.append(row)
 
@@ -514,7 +547,7 @@ def build_xlsx_from_ga(ga_pairs: List[GAPair]) -> BytesIO:
                 cell.alignment = cell_alignment
                 cell.border = border
 
-        widths = [6, 42, 22, 22, 22, 22, 22, 22, 22, 22, 48, 8, 10]
+        widths = [6, 42, 22, 22, 22, 22, 22, 22, 22, 22, 48, 8, 10, 12]
         for idx, width in enumerate(widths, start=1):
             ws.column_dimensions[chr(64 + idx)].width = width
 
