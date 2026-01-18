@@ -1,12 +1,13 @@
 # JSON 分片考试题生成器（DeepSeek + GA 对）
 
 ## 项目概览（Wiki 速览）
-- **用途**：上传/传入 JSON 文本分片，调用 DeepSeek（经 GPUStack）批量生成包含来源引用的考试题（GA 对），并支持在线编辑与 DOCX 导出。
+- **用途**：上传/传入 JSON 文本分片，调用 DeepSeek（经 GPUStack）批量生成包含来源引用的考试题（GA 对），并支持在线编辑与 DOCX/XLSX 导出。
 - **主体流程**：
   1. 前端 `static/index.html` 上传分片并配置参数。
   2. FastAPI 读取分片 → 按索引切片 → 逐分片调用 DeepSeek → 汇总 GA 对。
   3. 前端表格可修改题目、答案、难度与引用信息。
   4. `/export-docx` 将编辑后的 GA 对导出为 Word 文档。
+  5. `/export-xlsx` 将编辑后的 GA 对导出为 XLSX（单选/多选分页）。
 - **主要模块**：
   - `main.py`：FastAPI API、分片处理、DeepSeek 调用与 JSON 解析。
   - `prompts.py`：默认的 GA 系统提示词与用户提示构造。
@@ -59,6 +60,7 @@
 - `POST /api/generate-ga`：纯 JSON 请求版。
   - Body：`{ "chunks": [...], "chunk_indices": [int], "num_questions": 20, "system_prompt": "..." }`。
 - `POST /export-docx`：将前端编辑后的 GA 对导出为 DOCX，Body 见 `ExportDocxRequest`。
+- `POST /export-xlsx`：将前端编辑后的 GA 对导出为 XLSX，Body 见 `ExportXlsxRequest`。
 - 所有生成接口均会返回 `errors` 数组（若存在），便于前端直观提示 DeepSeek 调用失败的分片或异常原因。
 
 ## DeepSeek/GPUStack 调用与超时处理

@@ -509,6 +509,7 @@
             <th>选项（options，按行分隔）</th>
             <th>答案（ga_answer）</th>
             <th>难度（difficulty）</th>
+            <th>分数（score）</th>
             <th>来源定位（source_locator）</th>
             <th>原文摘录（source_excerpt）</th>
             <th>命题说明（comment）</th>
@@ -521,9 +522,10 @@
     </div>
 
     <div class="card">
-      <h2>③ 导出 DOCX（试题 + 答案 + 原文引用）</h2>
+      <h2>③ 导出 DOCX / XLSX（试题 + 答案 + 原文引用）</h2>
       <div class="button-row">
         <button id="export-docx-btn" class="ghost" disabled>导出为 DOCX</button>
+        <button id="export-xlsx-btn" class="ghost" disabled>导出为 XLSX</button>
       </div>
     </div>
   </div>
@@ -556,6 +558,7 @@
       const tbody = document.getElementById('ga-table-body');
       const tip = document.getElementById('no-data-tip');
       const exportBtn = document.getElementById('export-docx-btn');
+      const exportXlsxBtn = document.getElementById('export-xlsx-btn');
 
       tbody.innerHTML = '';
 
@@ -563,6 +566,7 @@
         table.style.display = 'none';
         tip.style.display = 'block';
         exportBtn.disabled = true;
+        exportXlsxBtn.disabled = true;
         return;
       }
 
@@ -620,6 +624,15 @@
         tdDiff.appendChild(inputDiff);
         tr.appendChild(tdDiff);
 
+        const tdScore = document.createElement('td');
+        const inputScore = document.createElement('input');
+        inputScore.type = 'number';
+        inputScore.step = '0.5';
+        inputScore.className = 'field-score small-input';
+        inputScore.value = p.score ?? '';
+        tdScore.appendChild(inputScore);
+        tr.appendChild(tdScore);
+
         const tdLoc = document.createElement('td');
         const taLoc = document.createElement('textarea');
         taLoc.className = 'field-source-locator';
@@ -647,6 +660,7 @@
       table.style.display = 'table';
       tip.style.display = 'none';
       exportBtn.disabled = false;
+      exportXlsxBtn.disabled = false;
     }
 
     function collectGAPairsFromTable() {
@@ -663,6 +677,9 @@
           .filter(Boolean);
         const ga_answer = tr.querySelector('.field-ga-answer').value;
         const difficulty = tr.querySelector('.field-difficulty').value;
+        const scoreRaw = tr.querySelector('.field-score').value.trim();
+        const parsedScore = scoreRaw ? Number(scoreRaw) : null;
+        const score = Number.isFinite(parsedScore) ? parsedScore : null;
         const source_locator = tr.querySelector('.field-source-locator').value;
         const source_excerpt = tr.querySelector('.field-source-excerpt').value;
         const comment = tr.querySelector('.field-comment').value;
@@ -673,6 +690,7 @@
           question,
           options,
           ga_answer,
+          score,
           difficulty,
           source_locator,
           source_excerpt,
@@ -968,6 +986,37 @@
         .catch(err => {
           console.error(err);
           alert('导出 DOCX 失败，请检查后端日志。');
+        });
+    });
+
+    document.getElementById('export-xlsx-btn').addEventListener('click', function () {
+      const gaPairs = collectGAPairsFromTable();
+      if (!gaPairs.length) {
+        alert('没有 GA 对可导出。');
+        return;
+      }
+
+      fetch('/export-xlsx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ga_pairs: gaPairs
+        })
+      })
+        .then(res => res.blob())
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'exam_ga_pairs.xlsx';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        })
+        .catch(err => {
+          console.error(err);
+          alert('导出 XLSX 失败，请检查后端日志。');
         });
     });
   </script>

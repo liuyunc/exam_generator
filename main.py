@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from io import BytesIO
 from typing import Callable, List, Optional
 
@@ -11,6 +12,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import time
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from openai import (
     APIConnectionError,
@@ -122,6 +125,7 @@ class GAPair(BaseModel):
     options: Optional[List[str]] = Field(default_factory=list)
     question: str
     ga_answer: str
+    score: Optional[float] = None
     difficulty: Optional[str] = ""
     source_excerpt: Optional[str] = ""
     source_locator: Optional[str] = ""
@@ -130,6 +134,10 @@ class GAPair(BaseModel):
 
 class ExportDocxRequest(BaseModel):
     title: str
+    ga_pairs: List[GAPair]
+
+
+class ExportXlsxRequest(BaseModel):
     ga_pairs: List[GAPair]
 
 
@@ -397,6 +405,132 @@ def call_deepseek_ga_for_chunks(
     return all_pairs, errors
 
 
+def _normalize_question_type(question_type: Optional[str]) -> str:
+    return (question_type or "").strip().lower()
+
+
+def _is_single_choice(question_type: Optional[str]) -> bool:
+    normalized = _normalize_question_type(question_type)
+    raw = question_type or ""
+    return "single" in normalized or "单选" in raw or "single_choice" in normalized
+
+
+def _is_multiple_choice(question_type: Optional[str]) -> bool:
+    normalized = _normalize_question_type(question_type)
+    raw = question_type or ""
+    return "multiple" in normalized or "多选" in raw or "multiple_choice" in normalized
+
+
+def _normalize_options(options: Optional[List[str] | str]) -> List[str]:
+    if options is None:
+        return []
+    if isinstance(options, str):
+        raw_options = options.splitlines()
+    else:
+        raw_options = options
+    cleaned = []
+    for opt in raw_options:
+        if opt is None:
+            continue
+        text = str(opt).strip()
+        if not text:
+            continue
+        text = re.sub(r"^[A-Ha-h][\.\:：、\)]\s*", "", text)
+        cleaned.append(text)
+    return cleaned
+
+
+def _build_analysis_text(pair: GAPair) -> str:
+    parts = []
+    if pair.difficulty:
+        parts.append(f"【难度】{pair.difficulty}")
+    if pair.source_locator:
+        parts.append(f"【来源定位】{pair.source_locator}")
+    if pair.source_excerpt:
+        parts.append(f"【原文摘录】{pair.source_excerpt}")
+    if pair.comment:
+        parts.append(f"【命题说明】{pair.comment}")
+    return "  ".join(parts)
+
+
+def build_xlsx_from_ga(ga_pairs: List[GAPair]) -> BytesIO:
+    wb = Workbook()
+    wb.remove(wb.active)
+
+    headers = [
+        "序号",
+        "题干",
+        "选项 A",
+        "选项 B",
+        "选项 C",
+        "选项 D",
+        "选项 E",
+        "选项 F",
+        "选项 G",
+        "选项 H",
+        "解析",
+        "分数",
+        "答案",
+    ]
+
+    header_fill = PatternFill("solid", fgColor="FFF200")
+    header_font = Font(bold=True)
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell_alignment = Alignment(vertical="top", wrap_text=True)
+    border = Border(
+        left=Side(style="thin", color="DDDDDD"),
+        right=Side(style="thin", color="DDDDDD"),
+        top=Side(style="thin", color="DDDDDD"),
+        bottom=Side(style="thin", color="DDDDDD"),
+    )
+
+    def add_sheet(title: str, rows: List[GAPair]):
+        ws = wb.create_sheet(title=title)
+        ws.append(headers)
+        for col in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_alignment
+            cell.border = border
+
+        for index, pair in enumerate(rows, start=1):
+            options = _normalize_options(pair.options)
+            option_cells = options[:8] + [""] * max(0, 8 - len(options))
+            analysis = _build_analysis_text(pair)
+            score = "" if pair.score is None else pair.score
+            row = [
+                index,
+                pair.question,
+                *option_cells,
+                analysis,
+                score,
+                pair.ga_answer,
+            ]
+            ws.append(row)
+
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = cell_alignment
+                cell.border = border
+
+        widths = [6, 42, 22, 22, 22, 22, 22, 22, 22, 22, 48, 8, 10]
+        for idx, width in enumerate(widths, start=1):
+            ws.column_dimensions[chr(64 + idx)].width = width
+
+        ws.freeze_panes = "A2"
+
+    single_pairs = [p for p in ga_pairs if _is_single_choice(p.question_type)]
+    multiple_pairs = [p for p in ga_pairs if _is_multiple_choice(p.question_type)]
+    add_sheet("单选题", single_pairs)
+    add_sheet("多选题", multiple_pairs)
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
 # ========= API：网页调用 =========
 
 @app.post("/api/generate-ga-from-file")
@@ -532,6 +666,21 @@ async def export_docx(req: ExportDocxRequest):
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=headers,
+    )
+
+
+@app.post("/export-xlsx")
+async def export_xlsx(req: ExportXlsxRequest):
+    """接收前端编辑好的 GA 对，生成 XLSX 下载"""
+    output = build_xlsx_from_ga(req.ga_pairs)
+    filename = "exam_ga_pairs.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"'
+    }
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
 
