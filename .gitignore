@@ -6,6 +6,7 @@ __pycache__/
 
 # 虚拟环境（任选实际使用的名字）
 venv/
+
 .venv/
 
 # PyCharm 配置
