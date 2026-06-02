@@ -76,3 +76,7 @@
 ## 资源
 - `text-chunks-export-2025-11-16.json`：示例分片数据，可直接在前端上传体验流程。
 - 若需调整默认提示词，请编辑 `prompts.py` 中的 `GA_SYSTEM_PROMPT` 与 `build_ga_user_prompt`。
+
+## 📖 项目文档
+
+关于本项目的详细使用说明与设计架构，请参阅：[项目详细指南](./doc/WIKI.md)。
