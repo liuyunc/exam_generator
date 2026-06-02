@@ -4,13 +4,18 @@ import asyncio
 import json
 import os
 import re
+import logging
 from io import BytesIO
 from typing import Callable, List, Optional
+from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, Form, Request
+from fastapi import FastAPI, UploadFile, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from pydantic import BaseModel, Field, conint, constr
 import time
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -26,7 +31,23 @@ from openai import (
 from prompts import GA_SYSTEM_PROMPT, build_ga_user_prompt
 from docx_utils import build_docx_from_ga, sort_ga_pairs_by_type
 
-# ========= 配置：gpustuck DeepSeek =========
+# ========= 日志配置 =========
+logger = logging.getLogger(__name__)
+
+# ========= 安全配置常量 =========
+MIN_TIMEOUT = 10
+MAX_TIMEOUT = 600  # 10分钟
+MIN_RETRIES = 1
+MAX_RETRIES = 5
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_JSON_SIZE = 5 * 1024 * 1024  # 5MB
+MAX_QUESTIONS = 100
+MIN_QUESTIONS = 1
+
+ALLOWED_STATIC_DIR = Path("static").resolve()
+ALLOWED_INDEX_FILE = ALLOWED_STATIC_DIR / "index.html"
+
+# ========= 配置：GPUStack/DeepSeek =========
 
 
 def _clean_env_value(raw: str, name: str) -> str:
@@ -37,7 +58,7 @@ def _clean_env_value(raw: str, name: str) -> str:
 
     cleaned = raw.strip()
     if cleaned != raw:
-        print(f"[config] 环境变量 {name} 含有首尾空格，已自动去除。")
+        logger.warning(f"[config] 环境变量 {name} 含有首尾空格，已自动去除。")
     return cleaned
 
 
@@ -45,55 +66,75 @@ def _normalize_base_url(raw: str, name: str) -> str:
     """标准化 base_url：去除空格与末尾斜杠，兼容 DeepSeek 直连或 GPUStack 代理。"""
 
     cleaned = _clean_env_value(raw, name)
-    # 兼容传入形如 "https://api.deepseek.com/" 或 GPUStack 带 path 的地址
+    if not cleaned:
+        raise ValueError(f"环境变量 {name} 不能为空")
+    
     if cleaned.endswith("/"):
         cleaned = cleaned[:-1]
+    
+    # 基础验证
+    if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
+        raise ValueError(f"base_url 必须以 http:// 或 https:// 开头")
+    
     return cleaned
 
 
-def _get_first_env(names: list, default: str, *, required_name: str) -> str:
-    """按优先级读取多个环境变量，便于兼容不同命名。"""
+def _get_first_env(names: list, *, required_name: str) -> str:
+    """按优先级读取多个环境变量，便于兼容不同命名。强制要求设置。"""
 
     for key in names:
         raw = os.getenv(key)
         if raw:
             if key != required_name:
-                print(
+                logger.info(
                     f"[config] 检测到 {key}，已作为 {required_name} 使用（建议改为 {required_name} 以避免混淆）。"
                 )
             return _clean_env_value(raw, key)
 
-    print(
-        f"[config] 未设置 {required_name}（或等价变量 {', '.join(names)}），将使用默认占位，后续调用可能认证失败。"
+    raise ValueError(
+        f"必须设置环境变量 {required_name}（或等价变量 {', '.join(names)}）"
     )
-    return default
 
 
-GPUSTACK_API_KEY = _get_first_env(
-    ["GPUSTACK_API_KEY", "DEEPSEEK_API_KEY"],
-    "YOUR_API_KEY",
-    required_name="GPUSTACK_API_KEY",
-)
-GPUSTACK_BASE_URL = _normalize_base_url(
-    _get_first_env(
-        ["GPUSTACK_BASE_URL", "DEEPSEEK_BASE_URL"],
-        "http://10.20.40.101/v1",
-        required_name="GPUSTACK_BASE_URL",
-    ),
-    "GPUSTACK_BASE_URL",
-)
+try:
+    GPUSTACK_API_KEY = _get_first_env(
+        ["GPUSTACK_API_KEY", "DEEPSEEK_API_KEY"],
+        required_name="GPUSTACK_API_KEY",
+    )
+    GPUSTACK_BASE_URL = _normalize_base_url(
+        _get_first_env(
+            ["GPUSTACK_BASE_URL", "DEEPSEEK_BASE_URL"],
+            required_name="GPUSTACK_BASE_URL",
+        ),
+        "GPUSTACK_BASE_URL",
+    )
+except ValueError as e:
+    logger.error(f"[config] 初始化失败: {e}")
+    raise
+
 MODEL_NAME = _clean_env_value(
     os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-r1"), "DEEPSEEK_MODEL_NAME"
 )
-GPUSTACK_TIMEOUT = float(
+
+# 添加超时和重试的范围限制
+raw_timeout = float(
     _clean_env_value(os.getenv("GPUSTACK_TIMEOUT", "120"), "GPUSTACK_TIMEOUT") or "120"
 )
-GPUSTACK_MAX_RETRIES = max(
-    int(_clean_env_value(os.getenv("GPUSTACK_MAX_RETRIES", "2"), "GPUSTACK_MAX_RETRIES") or "2"),
-    1,
-)
+GPUSTACK_TIMEOUT = max(MIN_TIMEOUT, min(raw_timeout, MAX_TIMEOUT))
+if GPUSTACK_TIMEOUT != raw_timeout:
+    logger.warning(f"[config] GPUSTACK_TIMEOUT 已调整到 [{MIN_TIMEOUT}, {MAX_TIMEOUT}] 范围")
 
-print(f"[config] base_url={GPUSTACK_BASE_URL}, model={MODEL_NAME}, timeout={GPUSTACK_TIMEOUT}s, retries={GPUSTACK_MAX_RETRIES}")
+raw_retries = int(
+    _clean_env_value(os.getenv("GPUSTACK_MAX_RETRIES", "2"), "GPUSTACK_MAX_RETRIES") or "2"
+)
+GPUSTACK_MAX_RETRIES = max(MIN_RETRIES, min(raw_retries, MAX_RETRIES))
+if GPUSTACK_MAX_RETRIES != raw_retries:
+    logger.warning(f"[config] GPUSTACK_MAX_RETRIES 已调整到 [{MIN_RETRIES}, {MAX_RETRIES}] 范围")
+
+logger.info(
+    f"[config] base_url={GPUSTACK_BASE_URL}, model={MODEL_NAME}, "
+    f"timeout={GPUSTACK_TIMEOUT}s, retries={GPUSTACK_MAX_RETRIES}"
+)
 
 client = OpenAI(
     api_key=GPUSTACK_API_KEY,
@@ -104,17 +145,47 @@ client = OpenAI(
 
 app = FastAPI(title="JSON分片考试题生成器（DeepSeek + GA对）")
 
+# 添加 CORS 中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000").split(","),
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+# 安全头中间件
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 # 静态文件目录：static/index.html
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """返回前端页面"""
-    index_path = os.path.join("static", "index.html")
-    with open(index_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    return HTMLResponse(html)
+    """返回前端页面（安全版本）"""
+    try:
+        if not ALLOWED_INDEX_FILE.exists():
+            logger.error(f"index.html 文件不存在: {ALLOWED_INDEX_FILE}")
+            return HTMLResponse("<h1>页面加载失败</h1>", status_code=500)
+        
+        with open(ALLOWED_INDEX_FILE, "r", encoding="utf-8") as f:
+            html = f.read()
+        return HTMLResponse(html)
+    except Exception as e:
+        logger.exception("加载 index.html 失败")
+        return HTMLResponse("<h1>页面加载失败，请稍后重试</h1>", status_code=500)
 
 
 # ========= 数据模型 =========
@@ -134,20 +205,20 @@ class GAPair(BaseModel):
 
 
 class ExportDocxRequest(BaseModel):
-    title: str
-    ga_pairs: List[GAPair]
+    title: constr(max_length=200)
+    ga_pairs: List[GAPair] = Field(max_items=1000)
 
 
 class ExportXlsxRequest(BaseModel):
-    ga_pairs: List[GAPair]
+    ga_pairs: List[GAPair] = Field(max_items=1000)
 
 
 class GARequest(BaseModel):
     """纯 API 调用版本（非网页上传）"""
-    chunks: List[dict]
-    chunk_indices: List[int]
-    num_questions: int = 20
-    system_prompt: Optional[str] = None
+    chunks: List[dict] = Field(min_items=1, max_items=1000)
+    chunk_indices: List[int] = Field(max_items=100)
+    num_questions: conint(ge=MIN_QUESTIONS, le=MAX_QUESTIONS) = 20
+    system_prompt: Optional[constr(max_length=5000)] = None
 
 
 # ========= 工具函数 =========
@@ -179,18 +250,21 @@ def extract_chunk_items(chunks: list, indices: list):
         items.append({
             "index": i,
             "title": title,
-            "text": text.strip()
+            "text": str(text).strip()
         })
     return items
 
 
 def extract_json_block_from_content(content: str) -> dict:
     """
-    从大模型返回的 content 文本中，尽量稳健地抽取出一个 JSON 对象。
+    从大模型返回的 content 文本中，稳健地抽取出一个 JSON 对象（带安全检查）。
     优先寻找以 {"ga_pairs" 开头的 JSON；如果没有，就从第一个 { 开始做括号匹配。
     """
     if not content:
         raise ValueError("模型返回内容为空，无法解析 JSON")
+
+    if len(content) > 10 * MAX_JSON_SIZE:
+        raise ValueError(f"模型返回内容过大（超过 {10 * MAX_JSON_SIZE} 字节）")
 
     # 1) 优先找 {"ga_pairs"
     start = content.find('{"ga_pairs"')
@@ -198,7 +272,7 @@ def extract_json_block_from_content(content: str) -> dict:
         # 退而求其次：找第一个 {
         start = content.find("{")
     if start == -1:
-        raise ValueError("未在模型返回中找到 '{'，可能没有输出 JSON：\n" + content[:200])
+        raise ValueError("未在模型返回中找到 '{'，可能没有输出 JSON")
 
     in_str = False
     escape = False
@@ -218,7 +292,6 @@ def extract_json_block_from_content(content: str) -> dict:
             if ch == '"':
                 in_str = True
             elif ch == "{":
-                # 遇到第一个 { 时 depth 从 0 -> 1
                 depth += 1
             elif ch == "}":
                 depth -= 1
@@ -227,14 +300,32 @@ def extract_json_block_from_content(content: str) -> dict:
                     break
 
     if end is None:
-        # 没闭合，尽量取到结尾
         end = len(content)
 
     json_str = content[start:end].strip()
+    
     if not json_str:
-        raise ValueError("提取到的 JSON 字符串为空。原始内容前 200 字符：\n" + content[:200])
+        raise ValueError("提取到的 JSON 字符串为空")
 
-    return json.loads(json_str)
+    if len(json_str) > MAX_JSON_SIZE:
+        raise ValueError(f"JSON 块大小超过 {MAX_JSON_SIZE} 字节限制")
+
+    try:
+        data = json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON 解析失败: {str(e)}")
+
+    # 验证结构
+    if not isinstance(data, dict):
+        raise ValueError("JSON 必须是一个对象")
+    
+    if "ga_pairs" not in data:
+        raise ValueError("JSON 缺少必需的 'ga_pairs' 字段")
+    
+    if not isinstance(data["ga_pairs"], list):
+        raise ValueError("'ga_pairs' 字段必须是列表")
+
+    return data
 
 
 def call_deepseek_ga_single_chunk(
@@ -262,21 +353,25 @@ def call_deepseek_ga_single_chunk(
             )
             break
         except (APITimeoutError, APIConnectionError) as e:
-            last_error = f"调用超时/连接异常：{repr(e)}"
-            log_fn(
-                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常：{repr(e)}；"
-                f" 超时设置 {GPUSTACK_TIMEOUT}s"
+            last_error = "API 调用超时或连接异常"
+            logger.warning(
+                f"[DeepSeek] 第 {attempt}/{GPUSTACK_MAX_RETRIES} 次调用超时/连接异常；"
+                f"超时设置 {GPUSTACK_TIMEOUT}s"
             )
             if attempt == GPUSTACK_MAX_RETRIES:
                 return [], last_error
             time.sleep(min(2 * attempt, 6))
+        except AuthenticationError as e:
+            last_error = "认证失败，请检查 API 密钥"
+            logger.error(f"[DeepSeek] 认证失败")
+            return [], last_error
         except APIError as e:
-            last_error = f"服务器返回错误：{repr(e)}"
-            log_fn(f"[DeepSeek] 服务器返回错误：{repr(e)}")
+            last_error = "API 服务异常，请稍后重试"
+            logger.error(f"[DeepSeek] 服务器返回错误: {type(e).__name__}")
             return [], last_error
         except Exception as e:
-            last_error = f"API调用失败：{repr(e)}"
-            log_fn(f"API调用失败：{repr(e)}")
+            last_error = "API 调用失败，请稍后重试"
+            logger.exception("API 调用异常")
             return [], last_error
 
     if resp is None:
@@ -292,19 +387,17 @@ def call_deepseek_ga_single_chunk(
         try:
             data = extract_json_block_from_content(content)
         except Exception as e:
-            # 为了调试方便，把 content 打到后端日志里
-            log_fn("==== 模型原始返回（前 500 字符）====")
-            log_fn(content[:500])
-            log_fn("==== JSON 解析失败原因 ====")
-            log_fn(repr(e))
-            # 不中断整个流程，返回空列表，让前端至少不 500
-            return [], f"模型返回内容无法解析为 JSON：{repr(e)}"
+            error_msg = f"模型返回内容无法解析为 JSON"
+            logger.warning(f"JSON 解析失败: {str(e)}")
+            logger.debug(f"模型原始返回（前 500 字符）: {content[:500]}")
+            return [], error_msg
 
     ga_pairs = data.get("ga_pairs", [])
     # 确保是列表
     if not isinstance(ga_pairs, list):
-        log_fn(f"模型返回中 ga_pairs 不是列表，完整 data： {data}")
+        logger.error(f"模型返回中 ga_pairs 不是列表")
         return [], "模型返回中 ga_pairs 不是列表"
+    
     return ga_pairs, None
 
 
@@ -327,14 +420,15 @@ async def deepseek_health():
             "message": f"连接成功，耗时 {elapsed_ms} ms",
             "models": model_ids,
         }
-    except AuthenticationError as e:
-        return {"ok": False, "message": f"认证失败：{e}"}
-    except (APIConnectionError, APITimeoutError) as e:
-        return {"ok": False, "message": f"连接失败/超时：{e}"}
-    except APIError as e:
-        return {"ok": False, "message": f"服务异常：{e}"}
+    except AuthenticationError:
+        return {"ok": False, "message": "认证失败，请检查 API 密钥"}
+    except (APIConnectionError, APITimeoutError):
+        return {"ok": False, "message": "连接失败或超时"}
+    except APIError:
+        return {"ok": False, "message": "服务异常"}
     except Exception as e:
-        return {"ok": False, "message": f"未知错误：{repr(e)}"}
+        logger.exception("健康检查异常")
+        return {"ok": False, "message": "健康检查失败"}
 
 
 @app.get("/api/system-prompt")
@@ -584,6 +678,14 @@ async def generate_ga_from_file(
     - 可选：自定义提示词
     """
 
+    # 验证文件类型
+    if file.content_type not in ["application/json", "application/octet-stream", "text/plain"]:
+        logger.warning(f"不允许的文件类型: {file.content_type}")
+        raise HTTPException(
+            status_code=400, 
+            detail="仅支持 JSON 文件"
+        )
+
     # 用于前端实时展示：将日志/结果放入队列，StreamingResponse 边产生边下发
     queue: asyncio.Queue[str | None] = asyncio.Queue()
     logs: List[str] = []
@@ -598,23 +700,52 @@ async def generate_ga_from_file(
 
     def log_and_collect(msg: str):
         logs.append(str(msg))
-        print(msg)
+        logger.info(msg)
         enqueue({"type": "log", "message": str(msg)})
 
     raw = await file.read()
+
+    # 检查文件大小
+    if len(raw) > MAX_FILE_SIZE:
+        error_msg = f"文件超过 {MAX_FILE_SIZE} 字节限制"
+        logger.warning(f"文件过大: {len(raw)} 字节")
+        raise HTTPException(status_code=413, detail=error_msg)
+
+    if len(raw) == 0:
+        raise HTTPException(status_code=400, detail="文件为空")
 
     async def producer():
         try:
             def generate():
                 log_and_collect("开始处理文件上传…")
-                chunks = json.loads(raw)
+                
+                try:
+                    chunks = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    error_msg = f"文件不是有效的 JSON: {str(e)}"
+                    log_and_collect(error_msg)
+                    enqueue({"type": "error", "message": error_msg, "logs": logs})
+                    return
+
                 log_and_collect("文件解析完成")
 
                 # 支持：顶层是 {'chunks': [...]} 或直接是 list
                 if isinstance(chunks, dict) and "chunks" in chunks:
                     chunks_list = chunks["chunks"]
-                else:
+                elif isinstance(chunks, list):
                     chunks_list = chunks
+                else:
+                    error_msg = "文件格式错误：需要 JSON 数组或对象包含 'chunks' 字段"
+                    log_and_collect(error_msg)
+                    enqueue({"type": "error", "message": error_msg, "logs": logs})
+                    return
+
+                # 验证题目数量
+                if not MIN_QUESTIONS <= num_questions <= MAX_QUESTIONS:
+                    error_msg = f"题目数量必须在 {MIN_QUESTIONS}-{MAX_QUESTIONS} 之间"
+                    log_and_collect(error_msg)
+                    enqueue({"type": "error", "message": error_msg, "logs": logs})
+                    return
 
                 # 解析索引
                 indices = []
@@ -635,6 +766,7 @@ async def generate_ga_from_file(
                     )
                 else:
                     log_and_collect(f"解析到 {len(indices)} 个分片索引: {indices}")
+                
                 chunk_items = extract_chunk_items(chunks_list, indices)
                 log_and_collect(f"提取到 {len(chunk_items)} 个有效分片")
 
@@ -661,7 +793,8 @@ async def generate_ga_from_file(
             # 在线程中执行耗时/阻塞的同步 DeepSeek 调用，避免卡住事件循环导致前端无法即时收到日志
             await asyncio.to_thread(generate)
         except Exception as e:
-            error_msg = f"生成失败：{repr(e)}"
+            error_msg = "处理文件时发生错误，请稍后重试"
+            logger.exception("文件处理异常")
             log_and_collect(error_msg)
             enqueue({"type": "error", "message": error_msg, "logs": logs})
         finally:
@@ -683,39 +816,47 @@ async def generate_ga_from_file(
 @app.post("/export-docx")
 async def export_docx(req: ExportDocxRequest):
     """接收前端编辑好的 GA 对，生成 DOCX 下载"""
-    ga_pairs_dicts = [p.dict() for p in req.ga_pairs]
-    sorted_ga_pairs = sort_ga_pairs_by_type(ga_pairs_dicts)
-    doc = build_docx_from_ga(sorted_ga_pairs, title=req.title)
+    try:
+        ga_pairs_dicts = [p.dict() for p in req.ga_pairs]
+        sorted_ga_pairs = sort_ga_pairs_by_type(ga_pairs_dicts)
+        doc = build_docx_from_ga(sorted_ga_pairs, title=req.title)
 
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
+        buffer = BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
 
-    filename = "exam_ga_pairs.docx"
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
+        filename = "exam_ga_pairs.docx"
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
 
-    return StreamingResponse(
-        buffer,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers=headers,
-    )
+        return StreamingResponse(
+            buffer,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers=headers,
+        )
+    except Exception as e:
+        logger.exception("导出 DOCX 异常")
+        raise HTTPException(status_code=500, detail="导出失败，请稍后重试")
 
 
 @app.post("/export-xlsx")
 async def export_xlsx(req: ExportXlsxRequest):
     """接收前端编辑好的 GA 对，生成 XLSX 下载"""
-    output = build_xlsx_from_ga(req.ga_pairs)
-    filename = "exam_ga_pairs.xlsx"
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"'
-    }
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
-    )
+    try:
+        output = build_xlsx_from_ga(req.ga_pairs)
+        filename = "exam_ga_pairs.xlsx"
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+    except Exception as e:
+        logger.exception("导出 XLSX 异常")
+        raise HTTPException(status_code=500, detail="导出失败，请稍后重试")
 
 
 # ========= API：纯后端调用版（可选） =========
@@ -725,10 +866,14 @@ async def api_generate_ga(req: GARequest):
     """
     纯 JSON API（不走上传文件），方便后续和 EasyDataset pipeline 联动
     """
-    chunk_items = extract_chunk_items(req.chunks, req.chunk_indices)
-    ga_pairs, errors = call_deepseek_ga_for_chunks(
-        chunk_items,
-        total_questions=req.num_questions,
-        system_prompt=req.system_prompt,
-    )
-    return {"ga_pairs": ga_pairs, "errors": errors}
+    try:
+        chunk_items = extract_chunk_items(req.chunks, req.chunk_indices)
+        ga_pairs, errors = call_deepseek_ga_for_chunks(
+            chunk_items,
+            total_questions=req.num_questions,
+            system_prompt=req.system_prompt,
+        )
+        return {"ga_pairs": ga_pairs, "errors": errors}
+    except Exception as e:
+        logger.exception("API 生成异常")
+        raise HTTPException(status_code=500, detail="生成失败，请稍后重试")
