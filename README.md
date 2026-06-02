@@ -1,82 +1,244 @@
-# JSON 分片考试题生成器（DeepSeek + GA 对）
+# Exam Generator
 
-## 项目概览（Wiki 速览）
-- **用途**：上传/传入 JSON 文本分片，调用 DeepSeek（经 GPUStack）批量生成包含来源引用的考试题（GA 对），并支持在线编辑与 DOCX/XLSX 导出。
-- **主体流程**：
-  1. 前端 `static/index.html` 上传分片并配置参数。
-  2. FastAPI 读取分片 → 按索引切片 → 逐分片调用 DeepSeek → 汇总 GA 对。
-  3. 前端表格可修改题目、答案、难度与引用信息。
-  4. `/export-docx` 将编辑后的 GA 对导出为 Word 文档。
-  5. `/export-xlsx` 将编辑后的 GA 对导出为 XLSX（单选/多选分页）。
-- **主要模块**：
-  - `main.py`：FastAPI API、分片处理、DeepSeek 调用与 JSON 解析。
-  - `prompts.py`：默认的 GA 系统提示词与用户提示构造。
-  - `docx_utils.py`：将 GA 对渲染为含题目/答案/引用的 DOCX。
-  - `static/index.html`：上传、进度条、在线编辑与导出前端页面。
-- **输入格式**：顶层为 `[{"name"|"fileName"|"title"?, "content"|"text"|"chunk"}]`，或包装在 `{ "chunks": [...] }` 中；索引用逗号分隔（如 `0,1,2`）。
-- **输出格式**：模型需返回 `{ "ga_pairs": [{ id, question, ga_answer, difficulty, source_excerpt, source_locator, comment }] }`。
+AI-powered knowledge assessment generator for training, certification, and technical knowledge-base evaluation. The project turns structured document chunks into traceable exam questions, lets reviewers edit the generated question set, and exports the result as DOCX or XLSX.
 
-## 环境与运行
-1. 安装依赖
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. 环境变量
-   - `GPUSTACK_API_KEY`：GPUStack/DeepSeek API Key（必填）。如果你在其他工程里已经使用 `DEEPSEEK_API_KEY`，本项目也会自动读取（并在启动日志提示最好改回 `GPUSTACK_API_KEY` 以保持一致）。
-   - `GPUSTACK_BASE_URL`：API Base，默认为 `http://10.20.40.101/v1`，可直接填 DeepSeek 官方或代理地址（支持带 `/api/deepseek/v1` 路径）。会自动去掉首尾空格和末尾 `/`，避免因隐形空格导致连接失败；同时兼容 `DEEPSEEK_BASE_URL` 命名。
-   - `DEEPSEEK_MODEL_NAME`：模型名，默认 `deepseek-r1`，会自动 trim 首尾空格。
-   - `GPUSTACK_TIMEOUT`：单次模型调用超时（秒），默认 `120`。
-   - `GPUSTACK_MAX_RETRIES`：连接/超时重试次数，默认 `2`。
-3. 启动服务
-   ```bash
-   uvicorn main:app --reload --host 0.0.0.0 --port 8833
-   ```
+The current implementation is a FastAPI application with a single-page web UI, OpenAI-compatible model access through DeepSeek/GPUStack, JSON chunk ingestion, source-cited question generation, and document export.
 
-### Docker 运行
-1. 构建镜像
-   ```bash
-   docker build -t exam-generator:latest .
-   ```
-2. 运行容器（请在环境变量中提供 GPUSTACK_API_KEY 等配置）
-   ```bash
-   docker run -p 8833:8833 \
-     -e GPUSTACK_API_KEY=YOUR_API_KEY \
-     -e GPUSTACK_BASE_URL=http://10.20.40.101/v1 \
-     -e DEEPSEEK_MODEL_NAME=deepseek-r1 \
-     exam-generator:latest
-   ```
-3. 浏览器访问 `http://localhost:8833/static`。
+## Why This Project Exists
 
-4. 使用
-   - 浏览器访问 `http://localhost:8833/static` 进入页面。
-   - 上传 JSON 分片、填写分片索引与题量（默认 20），可选自定义 System Prompt。
-   - 生成后的 GA 对可在表格中直接编辑，再点击“导出 DOCX”。
+Organizations often have a large body of manuals, standards, training materials, and internal knowledge-base content, but turning that material into high-quality assessment questions is slow and inconsistent. Exam Generator focuses on a practical RAG-adjacent workflow:
 
-## API 说明
-- `GET /`：返回首页 HTML。
-- `GET /api/deepseek-health`：检测 DeepSeek/GPUStack 连接与鉴权是否可用，返回 `ok` 和原因提示。
-- `POST /api/generate-ga-from-file`：表单上传 JSON 分片并生成 GA 对。
-  - 字段：`file`（上传文件）、`chunk_indices`（如 `0,1,2`）、`num_questions`、`system_prompt`。
-- `POST /api/generate-ga`：纯 JSON 请求版。
-  - Body：`{ "chunks": [...], "chunk_indices": [int], "num_questions": 20, "system_prompt": "..." }`。
-- `POST /export-docx`：将前端编辑后的 GA 对导出为 DOCX，Body 见 `ExportDocxRequest`。
-- `POST /export-xlsx`：将前端编辑后的 GA 对导出为 XLSX，Body 见 `ExportXlsxRequest`。
-- 所有生成接口均会返回 `errors` 数组（若存在），便于前端直观提示 DeepSeek 调用失败的分片或异常原因。
+1. Parse or prepare knowledge-base content as JSON chunks.
+2. Select the chunks that should be assessed.
+3. Generate source-grounded questions with answers and citations.
+4. Review and edit the result in a browser.
+5. Export reusable exam assets for Word and spreadsheet workflows.
 
-## DeepSeek/GPUStack 调用与超时处理
-- 单次调用默认 **120s** 超时，可通过 `GPUSTACK_TIMEOUT` 调整。
-- 连接或超时错误会按 `GPUSTACK_MAX_RETRIES` 自动重试，并记录后台日志，避免前端“无声”失败。
-- 仍失败时返回空列表，前端不会 500，可在日志中查看具体异常。
+This makes the project useful for education, enterprise training, railway communication standards training, and any domain where question quality and source traceability matter.
 
-## 开发提示
-- JSON 解析使用 `extract_json_block_from_content` 做括号匹配，能从模型的非纯 JSON 输出中提取合法块。
-- 对每个分片生成的 GA 对，会自动补充 `source_locator`，格式如 `（自动定位：分片2，xxx）`，避免引用缺失。
-- DOCX 导出：第一页仅题目，翻页后附答案/难度/引用/说明，默认标题可在前端输入框覆盖。
+## Features
 
-## 资源
-- `text-chunks-export-2025-11-16.json`：示例分片数据，可直接在前端上传体验流程。
-- 若需调整默认提示词，请编辑 `prompts.py` 中的 `GA_SYSTEM_PROMPT` 与 `build_ga_user_prompt`。
+- JSON knowledge chunk upload
+- Chunk index selection for targeted assessment generation
+- OpenAI-compatible LLM integration through DeepSeek/GPUStack
+- Single-choice, multiple-choice, true/false, and short-answer questions
+- Difficulty labels and source citations for every generated item
+- Editable browser table before export
+- DOCX export with questions, answers, difficulty, citations, and comments
+- XLSX export with separated sheets for single-choice and multiple-choice questions
+- Streaming generation logs for long-running model calls
+- Health check endpoint for model connectivity
+- Docker support
 
-## 📖 项目文档
+## Screenshots
 
-关于本项目的详细使用说明与设计架构，请参阅：[项目详细指南](./doc/WIKI.md)。
+These interface previews show the intended reviewer workflow.
+
+![Home screen](docs/images/home.svg)
+
+![Upload document chunks](docs/images/upload.svg)
+
+![Generated assessment table](docs/images/generator.svg)
+
+![Export results](docs/images/export.svg)
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[Browser UI] --> B[FastAPI application]
+    B --> C[JSON chunk parser]
+    C --> D[Prompt builder]
+    D --> E[DeepSeek or GPUStack model API]
+    E --> F[JSON response parser]
+    F --> G[Editable question table]
+    G --> H[DOCX export]
+    G --> I[XLSX export]
+```
+
+## Data Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as Web UI
+    participant API as FastAPI
+    participant LLM as OpenAI-compatible LLM
+    participant Export as Export builders
+
+    User->>UI: Upload JSON chunks and choose indexes
+    UI->>API: POST /api/generate-ga-from-file
+    API->>API: Validate file and extract chunks
+    API->>LLM: Generate source-grounded GA pairs
+    LLM-->>API: JSON question payload
+    API-->>UI: Streaming logs and final ga_pairs
+    User->>UI: Review and edit questions
+    UI->>Export: POST /export-docx or /export-xlsx
+    Export-->>User: Download exam asset
+```
+
+## Repository Structure
+
+```text
+.
+├── main.py                         # FastAPI app, API routes, model calls, XLSX export
+├── prompts.py                      # System prompt and user prompt construction
+├── docx_utils.py                   # DOCX rendering and question type helpers
+├── static/index.html               # Browser UI
+├── text-chunks-export-2025-11-16.json
+├── tests/                          # Unit tests for parser, generator, and exports
+├── .github/workflows/test.yml      # CI test workflow
+├── ROADMAP.md
+├── CONTRIBUTING.md
+└── LICENSE
+```
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment
+
+Copy the example file and set your model endpoint:
+
+```bash
+cp .env.example .env
+```
+
+Required variables:
+
+```bash
+GPUSTACK_API_KEY=your_api_key_here
+GPUSTACK_BASE_URL=https://api.deepseek.com/v1
+```
+
+Optional variables:
+
+```bash
+DEEPSEEK_MODEL_NAME=deepseek-r1
+GPUSTACK_TIMEOUT=120
+GPUSTACK_MAX_RETRIES=2
+CORS_ORIGINS=http://localhost:3000,http://localhost:8000
+```
+
+### 3. Run the App
+
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8833
+```
+
+Open:
+
+```text
+http://localhost:8833/static
+```
+
+### 4. Try the Sample Data
+
+Upload `text-chunks-export-2025-11-16.json`, select the desired chunk indexes, generate questions, review the table, then export DOCX or XLSX.
+
+## Docker
+
+```bash
+docker build -t exam-generator:latest .
+docker run -p 8833:8833 \
+  -e GPUSTACK_API_KEY=YOUR_API_KEY \
+  -e GPUSTACK_BASE_URL=https://api.deepseek.com/v1 \
+  -e DEEPSEEK_MODEL_NAME=deepseek-r1 \
+  exam-generator:latest
+```
+
+Then open `http://localhost:8833/static`.
+
+## API Overview
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/` | GET | Serve the main HTML page |
+| `/api/deepseek-health` | GET | Check model API connectivity |
+| `/api/system-prompt` | GET | Return the default generation prompt |
+| `/api/generate-ga-from-file` | POST | Upload JSON chunks and generate questions |
+| `/api/generate-ga` | POST | JSON API for programmatic generation |
+| `/export-docx` | POST | Export reviewed GA pairs as DOCX |
+| `/export-xlsx` | POST | Export reviewed GA pairs as XLSX |
+
+## Input Format
+
+The app accepts either a top-level array:
+
+```json
+[
+  {
+    "name": "chapter-1",
+    "content": "Document text to assess..."
+  }
+]
+```
+
+or an object with a `chunks` field:
+
+```json
+{
+  "chunks": [
+    {
+      "title": "chapter-1",
+      "text": "Document text to assess..."
+    }
+  ]
+}
+```
+
+Each chunk can use `content`, `text`, or `chunk` for the body. The UI accepts comma-separated indexes such as `0,1,2`.
+
+## Output Format
+
+The model is instructed to return:
+
+```json
+{
+  "ga_pairs": [
+    {
+      "id": "q1",
+      "question_type": "single_choice",
+      "options": ["A. ...", "B. ...", "C. ...", "D. ..."],
+      "question": "...",
+      "ga_answer": "A",
+      "difficulty": "easy",
+      "source_excerpt": "...",
+      "source_locator": "chapter-1 chunk-0",
+      "comment": "..."
+    }
+  ]
+}
+```
+
+## Testing
+
+```bash
+pip install -r requirements.txt pytest
+pytest -q
+```
+
+The current tests cover chunk parsing, robust JSON extraction, multi-chunk generation orchestration, DOCX rendering, and XLSX export.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned releases, including RAG retrieval, quality scoring, multilingual generation, teacher review workflows, and LMS integration.
+
+## Contributing
+
+Contributions are welcome. Good first areas include parser support, export formats, prompt quality, test coverage, and deployment documentation. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+This project is released under the [MIT License](LICENSE).
+
+## Project Documentation
+
+The longer technical wiki is available at [doc/WIKI.md](doc/WIKI.md).
