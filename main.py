@@ -30,6 +30,7 @@ from openai import (
 
 from prompts import GA_SYSTEM_PROMPT, build_ga_user_prompt
 from docx_utils import build_docx_from_ga, sort_ga_pairs_by_type
+from json_validator import JSONValidator, validate_and_sanitize_ga_response
 
 # ========= 日志配置 =========
 logger = logging.getLogger(__name__)
@@ -334,7 +335,7 @@ def call_deepseek_ga_single_chunk(
     system_prompt: Optional[str] = None,
     log_fn: Callable[[str], None] = print,
 ):
-    """针对单个分片调用 DeepSeek 生成 GA 对（带更稳健的 JSON 解析）"""
+    """针对单个分片调用 DeepSeek 生成 GA 对（带更稳健的 JSON 解析与验证）"""
     sys_prompt = system_prompt.strip() if system_prompt else GA_SYSTEM_PROMPT
     user_prompt = build_ga_user_prompt(text_for_model, num_questions)
 
@@ -392,12 +393,18 @@ def call_deepseek_ga_single_chunk(
             logger.debug(f"模型原始返回（前 500 字符）: {content[:500]}")
             return [], error_msg
 
-    ga_pairs = data.get("ga_pairs", [])
-    # 确保是列表
-    if not isinstance(ga_pairs, list):
-        logger.error(f"模型返回中 ga_pairs 不是列表")
-        return [], "模型返回中 ga_pairs 不是列表"
+    # ========= 新增：JSON 验证与幻觉检测 =========
+    ga_pairs, validation_result = validate_and_sanitize_ga_response(data, strict_mode=False)
     
+    # 记录验证信息
+    log_fn(JSONValidator.log_validation_report(validation_result, len(data.get("ga_pairs", []))))
+    
+    if not validation_result.is_valid:
+        error_msg = f"JSON 验证失败：{'; '.join(validation_result.errors[:3])}"
+        logger.error(f"JSON 验证失败: {validation_result.errors}")
+        return [], error_msg
+    
+    logger.info(f"JSON 验证通过，信任度评分: {validation_result.score:.2%}")
     return ga_pairs, None
 
 
