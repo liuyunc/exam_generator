@@ -4,7 +4,6 @@ JSON Validator for LLM Responses - 大模型 JSON 输出验证与幻觉检测
 针对从 DeepSeek/GPUStack 获取的 JSON 数据进行多层验证，防止模型幻觉。
 """
 
-import json
 import logging
 from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
