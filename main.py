@@ -9,11 +9,10 @@ from io import BytesIO
 from typing import Callable, List, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, Form, Request, HTTPException
+from fastapi import FastAPI, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field, conint, constr
 import time
@@ -207,17 +206,17 @@ class GAPair(BaseModel):
 
 class ExportDocxRequest(BaseModel):
     title: constr(max_length=200)
-    ga_pairs: List[GAPair] = Field(max_items=1000)
+    ga_pairs: List[GAPair] = Field(max_length=1000)
 
 
 class ExportXlsxRequest(BaseModel):
-    ga_pairs: List[GAPair] = Field(max_items=1000)
+    ga_pairs: List[GAPair] = Field(max_length=1000)
 
 
 class GARequest(BaseModel):
     """纯 API 调用版本（非网页上传）"""
-    chunks: List[dict] = Field(min_items=1, max_items=1000)
-    chunk_indices: List[int] = Field(max_items=100)
+    chunks: List[dict] = Field(min_length=1, max_length=1000)
+    chunk_indices: List[int] = Field(max_length=100)
     num_questions: conint(ge=MIN_QUESTIONS, le=MAX_QUESTIONS) = 20
     system_prompt: Optional[constr(max_length=5000)] = None
 
