@@ -238,10 +238,11 @@ class JSONValidator:
         if len(answer) > 10 and answer in question:
             warnings.append("答案内容与题目重复，可能是模型幻觉")
 
+        answer_text = answer.upper().strip()
+
         # 2. 多选题的答案验证
         question_type = sanitized.get("question_type", "").lower()
         if "multiple" in question_type or "多选" in question_type:
-            answer_text = answer.upper()
             # 检查是否包含有效的选项标记
             valid_chars = set("ABCDEFGH")
             answer_chars = set(c for c in answer_text if c in valid_chars)
@@ -250,7 +251,6 @@ class JSONValidator:
 
         # 3. 单选题的答案验证
         if "single" in question_type or "单选" in question_type:
-            answer_text = answer.upper().strip()
             if len(answer_text) > 2:  # 单选答案通常只有 1-2 个字符
                 warnings.append("单选题答案过长，可能包含多个选项")
 
@@ -260,8 +260,8 @@ class JSONValidator:
             options_lower = [str(o).lower() for o in options]
             
             # 检查答案是否在选项中（针对索引型答案）
-            if answer_text in ["a", "b", "c", "d", "e", "f", "g", "h"]:
-                idx = ord(answer_text) - ord('a')
+            if answer_text in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+                idx = ord(answer_text) - ord('A')
                 if idx >= len(options):
                     warnings.append(f"答案索引 '{answer_text}' 超出选项范围 (共 {len(options)} 个选项)")
 
