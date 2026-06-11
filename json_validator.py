@@ -260,10 +260,11 @@ class JSONValidator:
             options_lower = [str(o).lower() for o in options]
             
             # 检查答案是否在选项中（针对索引型答案）
-            if answer_text in ["a", "b", "c", "d", "e", "f", "g", "h"]:
-                idx = ord(answer_text) - ord('a')
+            ans_upper = str(answer).upper().strip()
+            if ans_upper in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+                idx = ord(ans_upper) - ord('A')
                 if idx >= len(options):
-                    warnings.append(f"答案索引 '{answer_text}' 超出选项范围 (共 {len(options)} 个选项)")
+                    warnings.append(f"答案索引 '{ans_upper}' 超出选项范围 (共 {len(options)} 个选项)")
 
         # 5. 难度等级有效性
         difficulty = sanitized.get("difficulty", "").lower()
