@@ -241,29 +241,28 @@ class JSONValidator:
         # 2. 多选题的答案验证
         question_type = sanitized.get("question_type", "").lower()
         if "multiple" in question_type or "多选" in question_type:
-            answer_text = answer.upper()
+            answer_text_upper = answer.upper()
             # 检查是否包含有效的选项标记
             valid_chars = set("ABCDEFGH")
-            answer_chars = set(c for c in answer_text if c in valid_chars)
+            answer_chars = set(c for c in answer_text_upper if c in valid_chars)
             if not answer_chars:
                 warnings.append("多选题答案中未发现有效的选项标记 (A-H)")
 
         # 3. 单选题的答案验证
         if "single" in question_type or "单选" in question_type:
-            answer_text = answer.upper().strip()
-            if len(answer_text) > 2:  # 单选答案通常只有 1-2 个字符
+            answer_text_upper = answer.upper().strip()
+            if len(answer_text_upper) > 2:  # 单选答案通常只有 1-2 个字符
                 warnings.append("单选题答案过长，可能包含多个选项")
 
         # 4. 选项与答案的一致性
         options = sanitized.get("options", [])
         if options and len(options) > 0:
-            options_lower = [str(o).lower() for o in options]
-            
             # 检查答案是否在选项中（针对索引型答案）
-            if answer_text in ["a", "b", "c", "d", "e", "f", "g", "h"]:
-                idx = ord(answer_text) - ord('a')
+            answer_text_lower = answer.lower().strip()
+            if answer_text_lower in ["a", "b", "c", "d", "e", "f", "g", "h"]:
+                idx = ord(answer_text_lower) - ord('a')
                 if idx >= len(options):
-                    warnings.append(f"答案索引 '{answer_text}' 超出选项范围 (共 {len(options)} 个选项)")
+                    warnings.append(f"答案索引 '{answer_text_lower}' 超出选项范围 (共 {len(options)} 个选项)")
 
         # 5. 难度等级有效性
         difficulty = sanitized.get("difficulty", "").lower()
